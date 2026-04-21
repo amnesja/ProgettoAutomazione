@@ -36,3 +36,10 @@ export function getTemperatureHistory(valveId: string) {
     )
     .all(valveId);
 }
+
+export function updateSetpoint(id: string, setpoint: number) {
+  const stmt = db.prepare(`
+    UPDATE valves SET setpoint = ? WHERE id = ?
+  `);
+  stmt.run(setpoint, id);
+}
