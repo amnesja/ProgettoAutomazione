@@ -1,16 +1,27 @@
 import db from "./database.js";
 
 // salva o aggiorna valvola
-export function upsertValve(id: string, setpoint: number, heating: boolean) {
+export function upsertValve(id: string, setpoint: number, heating: boolean, temperature?: number) {
   const stmt = db.prepare(`
-    INSERT INTO valves (id, setpoint, heating)
-    VALUES (?, ?, ?)
+    INSERT INTO valves (id, setpoint, heating, status, last_seen, temperature)
+    VALUES (?, ?, ?, 'ONLINE', CURRENT_TIMESTAMP, ?)
     ON CONFLICT(id) DO UPDATE SET
       setpoint = excluded.setpoint,
-      heating = excluded.heating
+      heating = excluded.heating,
+      status = 'ONLINE',
+      last_seen = CURRENT_TIMESTAMP,
+      temperature = COALESCE(excluded.temperature, temperature)
   `);
 
-  stmt.run(id, setpoint, heating ? 1 : 0);
+  stmt.run(id, setpoint, heating ? 1 : 0, temperature || null);
+}
+
+// aggiorna lo status della valvola
+export function updateValveStatus(id: string, status: 'ONLINE' | 'OFFLINE') {
+  const stmt = db.prepare(`
+    UPDATE valves SET status = ?, last_seen = CURRENT_TIMESTAMP WHERE id = ?
+  `);
+  stmt.run(status, id);
 }
 
 // salva temperatura

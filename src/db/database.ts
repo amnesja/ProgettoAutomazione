@@ -7,7 +7,10 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS valves (
   id TEXT PRIMARY KEY,
   setpoint REAL,
-  heating INTEGER
+  heating INTEGER,
+  status TEXT DEFAULT 'OFFLINE',
+  last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+  temperature REAL
 );
 
 CREATE TABLE IF NOT EXISTS temperature_readings (

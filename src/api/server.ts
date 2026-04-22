@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import { getValves, getTemperatureHistory, updateSetpoint } from "../db/repository.js";
+import { setOverride, getActiveOverrides, cancelOverride } from "../controller/controller.js";
 
 dotenv.config();
 
@@ -33,12 +34,54 @@ app.post("/setpoint", (req, res) => {
   res.json({ message: "Setpoint updated", valveId, setpoint });
 });
 
-// POST /override → per ora solo stub, lo completeremo dopo
+// POST /override → attiva un override manuale
 app.post("/override", (req, res) => {
-  res.status(501).json({ message: "Override not implemented yet" });
+  const { valveId, state, duration } = req.body;
+
+  if (!valveId || typeof state !== "boolean" || typeof duration !== "number") {
+    return res.status(400).json({
+      error: "valveId (string), state (boolean), and duration (number in seconds) are required"
+    });
+  }
+
+  if (duration <= 0) {
+    return res.status(400).json({ error: "duration must be greater than 0" });
+  }
+
+  const success = setOverride(valveId, state, duration);
+
+  if (!success) {
+    return res.status(404).json({ error: `Valve ${valveId} not found` });
+  }
+
+  res.json({
+    message: "Override activated",
+    valveId,
+    state: state ? "ON" : "OFF",
+    duration,
+    expiresAt: new Date(Date.now() + duration * 1000).toISOString()
+  });
 });
 
-const PORT = process.env.PORT || 3000;
+// GET /overrides → visualizza override attivi
+app.get("/overrides", (req, res) => {
+  const active = getActiveOverrides();
+  res.json({ active, count: Object.keys(active).length });
+});
+
+// DELETE /override/:valveId → cancella un override
+app.delete("/override/:valveId", (req, res) => {
+  const { valveId } = req.params;
+  const success = cancelOverride(valveId);
+
+  if (!success) {
+    return res.status(404).json({ error: `No active override for ${valveId}` });
+  }
+
+  res.json({ message: "Override cancelled", valveId });
+});
+
+const PORT = process.env.PORT || 3001;
 
 import path from "path";
 import { fileURLToPath } from "url";
