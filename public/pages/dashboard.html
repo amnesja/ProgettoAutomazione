@@ -1,20 +1,123 @@
+<section class="dashboard-shell">
+  <div class="dashboard-hero">
+    <div>
+      <p class="dashboard-kicker">Smart Thermostat</p>
+      <h2 class="dashboard-title">Cockpit Valvole</h2>
+      <p class="dashboard-subtitle">Storico temperature, stato riscaldamento e assegnazione stanze in un'unica vista.</p>
+    </div>
+    <div class="dashboard-actions">
+      <input
+        type="text"
+        id="searchInput"
+        class="form-control dashboard-search"
+        placeholder="Cerca valvola..."
+      >
+      <button class="btn btn-outline-light dashboard-theme-toggle" type="button" data-theme-toggle>
+        Tema
+      </button>
+    </div>
+  </div>
 
-<input type="text" id="searchInput" class="form-control form-control-sm mb-3 w-50" 
-  placeholder="Cerca valvola..."
->
+  <div class="dashboard-grid">
+    <section class="dashboard-panel dashboard-panel-wide">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Panoramica</p>
+          <h3 class="dashboard-panel-title">Stato impianto</h3>
+        </div>
+      </div>
+      <div class="dashboard-metrics" id="dashboardMetrics"></div>
+    </section>
 
-<div class="table-container">
-  <table class="table table-hover table-sm">
-    <thead class="table-dark">
-      <tr>
-        <th>Nome</th>
-        <th>Temperatura</th>
-        <th>Setpoint</th>
-        <th>Heating</th>
-        <th>Ultima lettura</th>
-        <th>Azioni</th>
-      </tr>
-    </thead>
-    <tbody id="valvesBody"></tbody>
-  </table>
-</div>
+    <section class="dashboard-panel">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Widget</p>
+          <h3 class="dashboard-panel-title">Valvola del Giorno</h3>
+        </div>
+      </div>
+      <div id="valveSpotlight" class="dashboard-spotlight"></div>
+    </section>
+
+    <section class="dashboard-panel dashboard-panel-chart">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Storico</p>
+          <h3 class="dashboard-panel-title">Trend temperatura</h3>
+        </div>
+        <select id="historyValveSelect" class="form-select form-select-sm dashboard-select"></select>
+      </div>
+      <div class="dashboard-canvas-wrap">
+        <canvas id="historyChart"></canvas>
+      </div>
+    </section>
+
+    <section class="dashboard-panel dashboard-panel-chart">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Stanze</p>
+          <h3 class="dashboard-panel-title">Media per stanza</h3>
+        </div>
+      </div>
+      <div class="dashboard-canvas-wrap">
+        <canvas id="roomsChart"></canvas>
+      </div>
+    </section>
+
+    <section class="dashboard-panel dashboard-panel-chart">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Heating</p>
+          <h3 class="dashboard-panel-title">Distribuzione stato</h3>
+        </div>
+      </div>
+      <div class="dashboard-canvas-wrap dashboard-canvas-wrap-small">
+        <canvas id="heatingChart"></canvas>
+      </div>
+    </section>
+
+    <section class="dashboard-panel dashboard-panel-chart">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Target</p>
+          <h3 class="dashboard-panel-title">Gauge setpoint selezionato</h3>
+        </div>
+      </div>
+      <div class="dashboard-canvas-wrap dashboard-canvas-wrap-small">
+        <canvas id="setpointGauge"></canvas>
+      </div>
+    </section>
+
+    <section class="dashboard-panel dashboard-panel-wide">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Operativo</p>
+          <h3 class="dashboard-panel-title">Valvole</h3>
+        </div>
+      </div>
+      <div class="table-container">
+        <table class="table dashboard-table table-hover table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Stanza</th>
+              <th>Temperatura</th>
+              <th>Setpoint</th>
+              <th>Heating</th>
+              <th>Ultima lettura</th>
+              <th>Azioni</th>
+            </tr>
+          </thead>
+          <tbody id="valvesBody">
+            <tr>
+              <td colspan="7" class="text-center text-muted py-4">
+                Caricamento dashboard...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="dashboardMessage" class="mt-3"></div>
+    </section>
+  </div>
+</section>

@@ -10,7 +10,15 @@ CREATE TABLE IF NOT EXISTS valves (
   heating INTEGER,
   status TEXT DEFAULT 'OFFLINE',
   last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-  temperature REAL
+  temperature REAL,
+  room_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rooms (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  global_setpoint REAL DEFAULT 20
 );
 
 CREATE TABLE IF NOT EXISTS temperature_readings (

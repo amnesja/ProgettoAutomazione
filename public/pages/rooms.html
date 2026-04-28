@@ -1,0 +1,54 @@
+<section class="rooms-shell">
+  <div class="rooms-hero">
+    <div>
+      <p class="dashboard-kicker">Smart Thermostat</p>
+      <h2 class="dashboard-title">Stanze</h2>
+      <p class="dashboard-subtitle">Panoramica per ambiente con setpoint, valvole assegnate e stato medio della stanza.</p>
+    </div>
+    <div class="rooms-hero-actions">
+      <button class="btn btn-primary rooms-create-btn" data-bs-toggle="modal" data-bs-target="#createRoomModal">
+        Crea Stanza
+      </button>
+    </div>
+  </div>
+
+  <div class="rooms-metrics" id="roomsMetrics"></div>
+
+  <div id="roomsMessage" class="mt-3"></div>
+
+  <div id="roomsList" class="rooms-grid">
+    <article class="rooms-empty-state">Caricamento stanze...</article>
+  </div>
+</section>
+
+<div class="modal fade" id="createRoomModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content rooms-modal">
+      <div class="modal-header">
+        <h5 class="modal-title">Crea Stanza</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="createRoomForm">
+          <div class="mb-3">
+            <label for="roomId" class="form-label">ID Stanza</label>
+            <input type="text" class="form-control" id="roomId" required>
+          </div>
+          <div class="mb-3">
+            <label for="roomName" class="form-label">Nome</label>
+            <input type="text" class="form-control" id="roomName" required>
+          </div>
+          <div class="mb-3">
+            <label for="roomDescription" class="form-label">Descrizione</label>
+            <textarea class="form-control" id="roomDescription" rows="3"></textarea>
+          </div>
+          <div class="mb-3">
+            <label for="globalSetpoint" class="form-label">Setpoint Globale (°C)</label>
+            <input type="number" class="form-control" id="globalSetpoint" value="20" step="0.5">
+          </div>
+          <button type="submit" class="btn btn-primary w-100">Crea</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

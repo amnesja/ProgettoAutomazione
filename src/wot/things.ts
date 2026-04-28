@@ -28,14 +28,16 @@ servient.addServer(httpServer);
 const valveStates: Record<string, { temperature: number; heating: boolean }> = {};
 const things: Record<string, any> = {};
 let wot: any;
+const VALID_VALVE_ID = /^valve\d+$/i;
 
 // -------------------------------------------------------------
 //  CREA UN THING WoT PER UNA VALVOLA
 // -------------------------------------------------------------
 async function createThing(valveId: string) {
+  const thingTitle = `valve-${valveId}`;
 
   const thing = await wot.produce({
-    title: `valve ${valveId}`,
+    title: thingTitle,
     description: `Smart thermostat valve ${valveId}`,
 
     properties: {
@@ -77,7 +79,7 @@ async function createThing(valveId: string) {
   await thing.expose();
   things[valveId] = thing;
 
-  console.log(`✅ WoT Thing exposed for ${valveId} at http://localhost:8081/${valveId}`);
+  console.log(`✅ WoT Thing exposed for ${valveId} at http://localhost:8081/${thingTitle}`);
 }
 
 // -------------------------------------------------------------
@@ -121,6 +123,10 @@ mqttClient.on('message', async (topic, message) => {
   if (!match) return;
 
   const valveId = match[1];
+  if (!VALID_VALVE_ID.test(valveId)) {
+    console.warn(`Ignoring invalid valve id for WoT: ${valveId}`);
+    return;
+  }
   const data = JSON.parse(message.toString());
   const { temperature, heating } = data;
 

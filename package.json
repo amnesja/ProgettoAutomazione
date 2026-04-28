@@ -29,6 +29,7 @@
     "@node-wot/core": "^0.8.0",
     "better-sqlite3": "^12.9.0",
     "express": "^5.2.1",
+    "mosquitto": "^1.0.2",
     "mqtt": "^5.15.1"
   },
   "devDependencies": {

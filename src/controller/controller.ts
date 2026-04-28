@@ -1,14 +1,16 @@
 import mqtt from "mqtt";
 import dotenv from "dotenv";
-import { upsertValve, insertTemperature, updateValveStatus } from "../db/repository.js";
+import { upsertValve, insertTemperature, updateValveStatus, getRoomById, assignValveToRoom as persistValveRoomAssignment } from "../db/repository.js";
+import db from "../db/database.js";
 
 dotenv.config();
 
 const brokerUrl = process.env.MQTT_BROKER || "mqtt://localhost:1883";
 const client = mqtt.connect(brokerUrl);
+const VALID_VALVE_ID = /^valve\d+$/i;
 
 // stato valvole
-const valves: Record<string, { temperature: number; heating: boolean; setpoint: number; lastSeen: number; status: 'ONLINE' | 'OFFLINE' }> = {};
+const valves: Record<string, { temperature: number; heating: boolean; setpoint: number; lastSeen: number; status: 'ONLINE' | 'OFFLINE'; roomId?: string }> = {};
 
 // override manuale
 interface Override {
@@ -39,10 +41,23 @@ client.on("message", (topic, message) => {
 
   const valveId = match[1]!;
   if (!valveId) return;
+  if (!VALID_VALVE_ID.test(valveId)) {
+    console.warn(`Ignoring invalid valve id: ${valveId}`);
+    return;
+  }
   const temperature = parseFloat(data.temperature);
 
   if (!valves[valveId]) {
-    valves[valveId] = { temperature, heating: false, setpoint: DEFAULT_SETPOINT, lastSeen: Date.now(), status: 'ONLINE' };
+    // Ottieni roomId dalla DB se esiste
+    const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as any;
+    const roomId = valveFromDb?.room_id;
+    let setpoint = DEFAULT_SETPOINT;
+    if (roomId) {
+      const room = getRoomById(roomId) as any;
+      if (room) setpoint = room.global_setpoint;
+    }
+    valves[valveId] = { temperature, heating: false, setpoint, lastSeen: Date.now(), status: 'ONLINE', roomId };
+    upsertValve(valveId, setpoint, false, temperature, roomId);
   } else {
     // se era offline, torna online
     if (valves[valveId].status === 'OFFLINE') {
@@ -162,6 +177,26 @@ export function cancelOverride(valveId: string): boolean {
     return true;
   }
   return false;
+}
+
+export function assignValveRoom(valveId: string, roomId?: string | null) {
+  if (!VALID_VALVE_ID.test(valveId)) {
+    return null;
+  }
+
+  const assignment = persistValveRoomAssignment(valveId, roomId || "");
+  if (!assignment) {
+    return null;
+  }
+
+  const valve = valves[valveId];
+  if (valve) {
+    valve.roomId = assignment.roomId || undefined;
+    valve.setpoint = assignment.setpoint;
+    upsertValve(valveId, assignment.setpoint, valve.heating, valve.temperature, assignment.roomId || undefined);
+  }
+
+  return assignment;
 }
 
 // Controlla periodicamente se ci sono valvole offline

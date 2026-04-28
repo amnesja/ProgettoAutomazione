@@ -1,2 +1,49 @@
-<h3>Contenuto  details</h3>
-<div id="detailsContent">Caricamento...</div>
+<section class="details-shell">
+  <div class="details-hero">
+    <div>
+      <p class="dashboard-kicker">Smart Thermostat</p>
+      <h2 class="dashboard-title">Dettagli Valvola</h2>
+      <p class="dashboard-subtitle">Vista approfondita di stato, setpoint, stanza assegnata e andamento della temperatura.</p>
+    </div>
+    <div class="details-hero-actions">
+      <select id="detailsValveSelect" class="form-select details-select"></select>
+      <button class="btn btn-outline-light" type="button" onclick="goToSettings(window.selectedValve)">Impostazioni</button>
+    </div>
+  </div>
+
+  <div id="detailsMessage" class="mt-3"></div>
+
+  <div class="details-grid">
+    <section class="dashboard-panel details-summary-panel">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Snapshot</p>
+          <h3 class="dashboard-panel-title">Stato corrente</h3>
+        </div>
+      </div>
+      <div id="detailsSummary" class="details-summary"></div>
+    </section>
+
+    <section class="dashboard-panel">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Contesto</p>
+          <h3 class="dashboard-panel-title">Indicatori rapidi</h3>
+        </div>
+      </div>
+      <div id="detailsStats" class="details-stats"></div>
+    </section>
+
+    <section class="dashboard-panel dashboard-panel-wide details-chart-panel">
+      <div class="dashboard-panel-header">
+        <div>
+          <p class="dashboard-eyebrow">Storico</p>
+          <h3 class="dashboard-panel-title">Temperatura e setpoint</h3>
+        </div>
+      </div>
+      <div class="dashboard-canvas-wrap">
+        <canvas id="detailsHistoryChart"></canvas>
+      </div>
+    </section>
+  </div>
+</section>
