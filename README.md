@@ -10,11 +10,12 @@ Il progetto include:
 - una **persistenza dati** su SQLite
 - una **dashboard web** statica servita dalla stessa app
 - un’integrazione **node-wot** per leggere/esporre lo stato live delle valvole come Thing
-+
-+Il frontend usa un approccio **ibrido**:
-+
-+- **Express** per stanze, storico, setpoint, assegnazione valvole e operazioni CRUD
-+- **WoT** per lo stato live delle valvole, in particolare temperatura e heating
+
+Il frontend usa un approccio **ibrido**:
+
+- **Express** per stanze, storico, setpoint, assegnazione valvole e operazioni CRUD
+
+- **WoT** per lo stato live delle valvole, in particolare temperatura e heating
 
 ---
 
