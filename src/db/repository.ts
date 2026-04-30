@@ -73,6 +73,20 @@ export function updateSetpoint(id: string, setpoint: number) {
   stmt.run(setpoint, id);
 }
 
+// cancella valvola 
+export function deleteValve(id: string) {
+  if (!isValidValveId(id)) {
+    return;
+  }
+
+  // elimina storico temperature
+  db.prepare("DELETE FROM temperature_readings WHERE valve_id = ?").run(id);
+
+  // elimina la valvola
+  db.prepare("DELETE FROM valves WHERE id = ?").run(id);
+}
+
+
 // Funzioni per stanze
 export function createRoom(id: string, name: string, description?: string, globalSetpoint?: number) {
   const stmt = db.prepare(`
@@ -143,3 +157,5 @@ export function getRoomAnalytics() {
     ORDER BY rooms.name ASC
   `).all();
 }
+
+

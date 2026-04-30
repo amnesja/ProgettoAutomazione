@@ -1,7 +1,8 @@
 import express from "express";
 import dotenv from "dotenv";
-import { getValves, getTemperatureHistory, updateSetpoint, createRoom, getRooms, getRoomById, updateRoomSetpoint, getValvesByRoom, getRoomAnalytics } from "../db/repository.js";
-import { setOverride, getActiveOverrides, cancelOverride, assignValveRoom } from "../controller/controller.js";
+import { getValves, getTemperatureHistory, updateSetpoint, createRoom, getRooms, getRoomById, updateRoomSetpoint, getValvesByRoom, getRoomAnalytics, deleteValve } from "../db/repository.js";
+import { setOverride, getActiveOverrides, cancelOverride, assignValveRoom, removeValve } from "../controller/controller.js";
+
 
 dotenv.config();
 
@@ -186,3 +187,19 @@ app.use(express.static(path.join(__dirname, "../../public")));
 app.listen(PORT, () => {
   console.log(`✅ HTTP API running on port ${PORT}`);
 });
+
+
+// DELETE /valves/:id → elimina una valvola
+app.delete("/valves/:id", (req, res) => {
+  const valveId = req.params.id;
+
+  if (!VALID_VALVE_ID.test(valveId)) {
+    return res.status(400).json({ error: "Invalid valve id format" });
+  }
+
+  deleteValve(valveId);     // DB
+  removeValve(valveId);     // Controller
+
+  res.json({ success: true, message: `Valve ${valveId} deleted` });
+});
+

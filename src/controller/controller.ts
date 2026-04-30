@@ -211,3 +211,19 @@ setInterval(() => {
     }
   }
 }, 10000); // verifica ogni 10 secondi
+
+// funzione di rimozione della valvola 
+export function removeValve(valveId: string) {
+  // rimuovi override se presente
+  if (overrides[valveId]) {
+    clearTimeout(overrides[valveId].timeoutId);
+    delete overrides[valveId];
+  }
+
+  // rimuovi la valvola dalla memoria del controller
+  if (valves[valveId]) {
+    delete valves[valveId];
+  }
+
+  console.log(`🗑️ Valvola ${valveId} rimossa dal controller`);
+}

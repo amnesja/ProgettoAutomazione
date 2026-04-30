@@ -56,7 +56,8 @@ async function createThing(valveId: string) {
     actions: {
       setHeating: {
         input: { type: 'boolean' }
-      }
+      },
+      delete: {} 
     }
   });
 
@@ -76,11 +77,37 @@ async function createThing(valveId: string) {
     return Promise.resolve();
   });
 
+  thing.setActionHandler('delete', async () => {
+  removeThing(valveId);
+  });
+
+
   await thing.expose();
   things[valveId] = thing;
 
   console.log(`✅ WoT Thing exposed for ${valveId} at http://localhost:8081/${thingTitle}`);
 }
+
+// cancella un thing Wot per una valvola 
+export function removeThing(valveId: string) {
+  const thing = things[valveId];
+  const thingName = `valve-${valveId}`;
+
+  if (thing) {
+    try {
+      thing.destroy();
+    } catch (err) {
+      console.warn(`⚠️ Errore durante destroy() di ${thingName}:`, err);
+    }
+
+    delete things[valveId];
+  }
+
+  console.log(`🗑️ Thing WoT rimosso: ${thingName}`);
+}
+
+
+
 
 // -------------------------------------------------------------
 //  DIRECTORY THING — LISTA DELLE VALVOLE
@@ -152,3 +179,5 @@ servient.start().then(async (wo) => {
   mqttClient.subscribe('home/valves/+/temperature');
 
 }).catch(console.error);
+
+
