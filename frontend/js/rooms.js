@@ -97,7 +97,7 @@ function renderRoomsList() {
           <div class="rooms-card-setpoint">
             <span>${numberOrFallback(room.global_setpoint, 20).toFixed(1)}°C</span>
           </div>
-        </div>
+</div>
 
         <p class="rooms-card-description">${room.description || "Nessuna descrizione disponibile."}</p>
 
@@ -123,6 +123,7 @@ function renderRoomsList() {
         <div class="rooms-card-actions">
           <button class="btn btn-outline-secondary btn-sm" onclick="viewRoomValves('${room.id}')">Dettaglio Valvole</button>
           <button class="btn btn-warning btn-sm" onclick="editRoomSetpoint('${room.id}')">Modifica Setpoint</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteRoom('${room.id}')">Elimina</button>
         </div>
       </article>
     `;
@@ -193,6 +194,27 @@ async function editRoomSetpoint(roomId) {
   } catch (err) {
     console.error("Errore aggiornando setpoint stanza:", err);
     renderRoomsMessage("Non sono riuscito ad aggiornare il setpoint della stanza.", "danger");
+  }
+}
+
+async function deleteRoom(roomId) {
+  const room = roomsPageData.find((item) => item.id === roomId);
+  const roomName = room ? room.name : roomId;
+
+  if (!confirm(`Sei sicuro di voler eliminare la stanza "${roomName}"?`)) {
+    return;
+  }
+
+  try {
+    await fetchJson(`/rooms/${roomId}`, {
+      method: "DELETE"
+    });
+
+    renderRoomsMessage(`Stanza "${roomName}" eliminata.`, "success");
+    await loadRoomsPage();
+  } catch (err) {
+    console.error("Errore eliminando stanza:", err);
+    renderRoomsMessage("Non sono riuscito ad eliminare la stanza.", "danger");
   }
 }
 

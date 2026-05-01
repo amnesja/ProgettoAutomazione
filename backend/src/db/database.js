@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
-
-const db = new Database("thermostat.db");
-
+import { env } from "../config/env.js";
+const db = new Database(env.SQLITE_DB_PATH);
 // creazione tabelle
 db.exec(`
 CREATE TABLE IF NOT EXISTS valves (
@@ -28,5 +27,4 @@ CREATE TABLE IF NOT EXISTS temperature_readings (
   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `);
-
 export default db;

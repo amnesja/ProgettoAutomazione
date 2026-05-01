@@ -77,7 +77,6 @@ async function loadPage(page) {
     document.getElementById("app").innerHTML = html;
     bindThemeToggle(document.getElementById("app"));
     applyTheme();
-
     updatePageTitle(page);
 
     switch (page) {
@@ -86,9 +85,6 @@ async function loadPage(page) {
           throw new Error("initDashboard is not available");
         }
         await initDashboard();
-        break;
-      case "details":
-        await initDetails();
         break;
       case "settings":
         await initSettings();
@@ -117,15 +113,11 @@ async function loadPage(page) {
 function updatePageTitle(page) {
   const titles = {
     dashboard: "Dashboard",
-    details: "Dettagli",
-    settings: "Impostazioni",
-    rooms: "Stan Rooms",
+    rooms: "Stanze",
     wot: "WoT Explorer"
   };
-
   document.getElementById("pageTitle").textContent = titles[page] || "App";
 }
-
 function router() {
   const page = window.location.hash.replace("#", "") || "dashboard";
   loadPage(page);
@@ -143,3 +135,43 @@ document.addEventListener("click", function (e) {
     window.location.hash = hash;   // forza il cambio pagina
   }
 });
+
+// Search functionality
+function initSearch() {
+  const searchInput = document.getElementById("navSearch");
+  if (!searchInput) return;
+
+  searchInput.addEventListener("input", function (e) {
+    const query = e.target.value.toLowerCase().trim();
+    const event = new CustomEvent("search", { detail: { query } });
+    document.dispatchEvent(event);
+  });
+}
+
+// System status indicator
+function updateSystemStatus(isOnline) {
+  const statusEl = document.getElementById("systemStatus");
+  if (!statusEl) return;
+
+  const textEl = statusEl.querySelector(".app-status-text");
+  if (isOnline) {
+    statusEl.classList.remove("offline");
+    if (textEl) textEl.textContent = "Online";
+  } else {
+    statusEl.classList.add("offline");
+    if (textEl) textEl.textContent = "Offline";
+  }
+}
+
+// Initialize on load
+initSearch();
+
+// Check API connectivity periodically
+setInterval(async () => {
+  try {
+    const res = await fetch("/valves");
+    updateSystemStatus(res.ok);
+  } catch {
+    updateSystemStatus(false);
+  }
+}, 10000);

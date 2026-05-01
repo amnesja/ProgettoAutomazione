@@ -485,18 +485,18 @@ function renderTable() {
     const roomName = rooms.find((room) => room.id === valve.room_id)?.name || "Nessuna";
 
     row.innerHTML = `
-      <td>
+<td>
         <button class="btn btn-link p-0 text-decoration-none" onclick="focusValve('${valve.id}')">
           ${valve.id}
         </button>
       </td>
       <td>${buildRoomControls(valve)}</td>
-      <td>${valve.temperature.toFixed(1)}°C</td>
+<td>${valve.temperature > 0 ? valve.temperature.toFixed(1) + "°C" : "—"}</td>
       <td>${valve.setpoint}°C</td>
-      <td>${valve.heating ? "🔥 ON" : "❄️ OFF"}</td>
+      <td>${valve.temperature > 0 && valve.heating ? "🔥 ON" : "❄️ OFF"}</td>
       <td>${formatLastSeen(valve.last_seen)}</td>
       <td>
-        <button class="btn btn-sm btn-primary me-1" onclick="goToDetails('${valve.id}')">Dettagli</button>
+        <button class="btn btn-sm btn-primary me-1" onclick="goToSettings('${valve.id}')">Impostazioni</button>
         <button class="btn btn-sm btn-success" onclick="assignValveRoom('${valve.id}')">Assegna</button>
         <div class="small text-muted mt-1">${roomName}</div>
       </td>
@@ -622,11 +622,6 @@ function bindDashboardThemeRefresh() {
   });
 
   window.__dashboardThemeRefreshBound = true;
-}
-
-function goToDetails(name) {
-  window.location.hash = "details";
-  window.selectedValve = name;
 }
 
 function goToSettings(name) {

@@ -21,11 +21,16 @@ client.on("connect", () => {
 
   // invia temperatura ogni 5 secondi
   setInterval(() => {
-    // simulazione semplice
+    // Simulazione con limite minimo (temperatura ambiente invernale = 5°C)
+    const MIN_TEMP = 5;
+    const MAX_TEMP = 30;
+
     if (heating) {
-      temperature += 0.2;
+      temperature += 0.3;
+      if (temperature > MAX_TEMP) temperature = MAX_TEMP;
     } else {
       temperature -= 0.1;
+      if (temperature < MIN_TEMP) temperature = MIN_TEMP;
     }
 
     const payload = JSON.stringify({
@@ -46,7 +51,7 @@ client.on("connect", () => {
 client.on("message", (topic, message) => {
   const data = JSON.parse(message.toString());
 
-  if (topic === `home/valves/${valveId}/command`) {
+if (topic === `home/valves/${valveId}/command`) {
     heating = data.heating;
     console.log(`🔥 [${valveId}] Heating set to: ${heating}`);
   }
