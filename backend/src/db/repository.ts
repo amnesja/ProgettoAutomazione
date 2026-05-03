@@ -7,12 +7,13 @@ function isValidValveId(id: string) {
 }
 
 // salva o aggiorna valvola
-export function upsertValve(id: string, setpoint: number, heating: boolean, temperature?: number, roomId?: string) {
+export function upsertValve(id: string, setpoint: number, heating: boolean, temperature?: number, roomId?: string, manualSetpoint?: number | null) {
   const stmt = db.prepare(`
-    INSERT INTO valves (id, setpoint, heating, status, last_seen, temperature, room_id)
-    VALUES (?, ?, ?, 'ONLINE', CURRENT_TIMESTAMP, ?, ?)
+    INSERT INTO valves (id, setpoint, manual_setpoint, heating, status, last_seen, temperature, room_id)
+    VALUES (?, ?, ?, 'ONLINE', CURRENT_TIMESTAMP, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       setpoint = excluded.setpoint,
+      manual_setpoint = COALESCE(excluded.manual_setpoint, manual_setpoint),
       heating = excluded.heating,
       status = 'ONLINE',
       last_seen = CURRENT_TIMESTAMP,
@@ -20,7 +21,7 @@ export function upsertValve(id: string, setpoint: number, heating: boolean, temp
       room_id = COALESCE(excluded.room_id, room_id)
   `);
 
-  stmt.run(id, setpoint, heating ? 1 : 0, temperature || null, roomId || null);
+  stmt.run(id, setpoint, manualSetpoint || null, heating ? 1 : 0, temperature || null, roomId || null);
 }
 
 // aggiorna lo status della valvola (e resetta heating quando va offline)
@@ -62,20 +63,44 @@ export function getTemperatureHistory(valveId: string) {
     .all(valveId);
 }
 
+// DEPRECATED: use controller.setManualSetpoint for new setpoints
 export function updateSetpoint(id: string, setpoint: number) {
   if (!isValidValveId(id)) {
     return;
-  }
-
-  const valveRow = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(id) as { room_id: string | null } | undefined;
-  if (valveRow?.room_id != null) {
-    throw new Error(`Cannot update setpoint for valve "${id}" assigned to room "${valveRow.room_id}". Update room setpoint or propagate.`);
   }
 
   const stmt = db.prepare(`
     UPDATE valves SET setpoint = ? WHERE id = ?
   `);
   stmt.run(setpoint, id);
+}
+
+export function setValveManualSetpoint(id: string, setpoint: number) {
+  if (!isValidValveId(id)) {
+    return false;
+  }
+  const stmt = db.prepare(`
+    UPDATE valves SET setpoint = ?, manual_setpoint = ? WHERE id = ?
+  `);
+  const result = stmt.run(setpoint, setpoint, id);
+  return result.changes > 0;
+}
+
+export function getValveManualSetpoint(id: string): number | null {
+  if (!isValidValveId(id)) {
+    return null;
+  }
+  const row = db.prepare("SELECT manual_setpoint FROM valves WHERE id = ?").get(id) as { manual_setpoint: number } | undefined | null;
+  return row?.manual_setpoint ?? null;
+}
+
+export function clearValveManualSetpoint(id: string): boolean {
+  if (!isValidValveId(id)) {
+    return false;
+  }
+  const stmt = db.prepare("UPDATE valves SET manual_setpoint = NULL WHERE id = ?");
+  const result = stmt.run(id);
+  return result.changes > 0;
 }
 
 export function propagateRoomSetpoint(roomId: string): number {
@@ -137,25 +162,26 @@ export function assignValveToRoom(valveId: string, roomId: string | null) {
     return null;
   }
 
-  if (roomId) {
-    const room = getRoomById(roomId) as any;
-    const setpoint = room?.global_setpoint ?? 20;
+    if (roomId) {
+      const room = getRoomById(roomId) as any;
+      const setpoint = room?.global_setpoint ?? 20;
 
-    const stmt = db.prepare(`
-      INSERT INTO valves (id, setpoint, heating, status, last_seen, room_id)
-      VALUES (?, ?, 0, 'OFFLINE', CURRENT_TIMESTAMP, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        setpoint = excluded.setpoint,
-        room_id = excluded.room_id,
-        last_seen = CURRENT_TIMESTAMP
-    `);
-    stmt.run(valveId, setpoint, roomId);
+      const stmt = db.prepare(`
+        INSERT INTO valves (id, setpoint, manual_setpoint, heating, status, last_seen, room_id)
+        VALUES (?, ?, NULL, 0, 'OFFLINE', CURRENT_TIMESTAMP, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          setpoint = excluded.setpoint,
+          manual_setpoint = NULL,
+          room_id = excluded.room_id,
+          last_seen = CURRENT_TIMESTAMP
+      `);
+      stmt.run(valveId, setpoint, roomId);
 
-    return {
-      roomId,
-      setpoint
-    };
-  } else {
+      return {
+        roomId,
+        setpoint
+      };
+    } else {
     // Unassign: remove room_id, keep setpoint
     const stmt = db.prepare("UPDATE valves SET room_id = NULL WHERE id = ?");
     stmt.run(valveId);
@@ -185,7 +211,7 @@ export function getRoomAnalytics() {
       rooms.name,
       rooms.global_setpoint,
       COUNT(valves.id) AS valve_count,
-      ROUND(AVG(valves.temperature), 2) AS avg_temperature,
+      ROUND(AVG(COALESCE(valves.temperature, 0)), 2) AS avg_temperature,
       SUM(CASE WHEN valves.heating = 1 THEN 1 ELSE 0 END) AS heating_on_count
     FROM rooms
     LEFT JOIN valves ON valves.room_id = rooms.id

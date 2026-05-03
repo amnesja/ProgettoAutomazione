@@ -1,6 +1,6 @@
 import mqtt from "mqtt";
 import dotenv from "dotenv";
-import { upsertValve, insertTemperature, updateValveStatus, getRoomById, assignValveToRoom as persistValveRoomAssignment } from "../db/repository.js";
+import { upsertValve, insertTemperature, updateValveStatus, getRoomById, assignValveToRoom as persistValveRoomAssignment, setValveManualSetpoint, getValveManualSetpoint, clearValveManualSetpoint } from "../db/repository.js";
 import db from "../db/database.js";
 import { fileURLToPath } from "url";
 
@@ -21,6 +21,7 @@ const valves: Record<
     lastSeen: number;
     status: ValveStatus;
     roomId?: string;
+    manualSetpoint?: boolean;
   }
 > = {};
 
@@ -129,22 +130,36 @@ export function startController() {
 
 console.log(`🌡️ ${valveId}: ${temperature}°C`);
 
-// Always sync setpoint from room if assigned (every update)
-if (!valves[valveId].roomId) {
-  const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as { room_id?: string } | undefined;
-  valves[valveId].roomId = valveFromDb?.room_id || undefined;
-}
+      // Sync setpoint from room if assigned and no manual override in DB
+      if (!valves[valveId].roomId) {
+        const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as { room_id?: string } | undefined;
+        valves[valveId].roomId = valveFromDb?.room_id || undefined;
+      }
 
-const roomId = valves[valveId].roomId;
-if (roomId) {
-  const room = getRoomById(roomId) as { global_setpoint?: number } | undefined;
-  const roomSetpoint = room?.global_setpoint ?? DEFAULT_SETPOINT;
-  if (Math.abs(valves[valveId].setpoint - roomSetpoint) > 0.01) {
-    console.log(`🔄 ${valveId}: sync setpoint to room "${roomId}" → ${roomSetpoint}°C (was ${valves[valveId].setpoint}°C)`);
-    valves[valveId].setpoint = roomSetpoint;
-    upsertValve(valveId, roomSetpoint, valves[valveId].heating, valves[valveId].temperature, roomId);
-  }
-}
+      const roomId = valves[valveId].roomId;
+      const manualFromDb = getValveManualSetpoint(valveId);
+      if (roomId) {
+        // Prioritize room setpoint if assigned
+        const room = getRoomById(roomId) as { global_setpoint?: number } | undefined;
+        const roomSetpoint = room?.global_setpoint ?? DEFAULT_SETPOINT;
+        if (Math.abs(valves[valveId].setpoint - roomSetpoint) > 0.01 || manualFromDb !== null) {
+          if (manualFromDb !== null) {
+            clearValveManualSetpoint(valveId);
+            console.log(`🧹 ${valveId}: cleared stale manual_setpoint for room "${roomId}"`);
+          }
+          console.log(`🔄 ${valveId}: sync setpoint to room "${roomId}" → ${roomSetpoint}°C (was ${valves[valveId].setpoint}°C)`);
+          valves[valveId].setpoint = roomSetpoint;
+          valves[valveId].manualSetpoint = false;
+          upsertValve(valveId, roomSetpoint, valves[valveId].heating, valves[valveId].temperature, roomId, null);
+        }
+      } else if (manualFromDb !== null) {
+        // Use manual only if no room
+        if (Math.abs(valves[valveId].setpoint - manualFromDb) > 0.01) {
+          console.log(`📋 ${valveId}: using manual setpoint ${manualFromDb}°C from DB (no room)`);
+          valves[valveId].setpoint = manualFromDb;
+          valves[valveId].manualSetpoint = true;
+        }
+      }
 
 const now = Date.now();
 
@@ -285,7 +300,46 @@ export function assignValveRoom(valveId: string, roomId?: string | null) {
   return assignment;
 }
 
-// funzione di rimozione della valvola
+export function setManualSetpoint(valveId: string, setpoint: number): boolean {
+  // Persist to DB first
+  const success = setValveManualSetpoint(valveId, setpoint);
+  if (!success) {
+    console.log(`❌ ${valveId}: failed to set manual setpoint in DB`);
+    return false;
+  }
+
+  // Update in-memory if valve active
+  if (valves[valveId]) {
+    valves[valveId].setpoint = setpoint;
+    valves[valveId].manualSetpoint = true;
+    upsertValve(valveId, setpoint, valves[valveId].heating, valves[valveId].temperature, valves[valveId].roomId, setpoint);
+  } else {
+    // Load/init from DB for consistency
+    const valveFromDb = db.prepare("SELECT * FROM valves WHERE id = ?").get(valveId) as any;
+    valves[valveId] = {
+      temperature: valveFromDb?.temperature || 20,
+      heating: !!valveFromDb?.heating,
+      setpoint,
+      lastSeen: Date.now(),
+      status: "ONLINE" as ValveStatus,
+      roomId: valveFromDb?.room_id || undefined,
+      manualSetpoint: true
+    };
+    upsertValve(valveId, setpoint, valves[valveId].heating, valves[valveId].temperature, valves[valveId].roomId, setpoint);
+  }
+
+  console.log(`✅ ${valveId}: manual setpoint ${setpoint}°C (DB + in-memory)`);
+  return true;
+}
+
+export function clearManualSetpoint(valveId: string): boolean {
+  if (!valves[valveId]) return false;
+  valves[valveId].manualSetpoint = false;
+  console.log(`🔄 ${valveId}: cleared manual setpoint flag`);
+  return true;
+}
+
+
 export function removeValve(valveId: string) {
   if (overrides[valveId]) {
     clearTimeout(overrides[valveId].timeoutId);

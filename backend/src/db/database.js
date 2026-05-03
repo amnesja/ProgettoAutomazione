@@ -6,6 +6,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS valves (
   id TEXT PRIMARY KEY,
   setpoint REAL,
+  manual_setpoint REAL,
   heating INTEGER,
   status TEXT DEFAULT 'OFFLINE',
   last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,

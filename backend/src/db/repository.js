@@ -4,19 +4,20 @@ function isValidValveId(id) {
     return VALID_VALVE_ID.test(id);
 }
 // salva o aggiorna valvola
-export function upsertValve(id, setpoint, heating, temperature, roomId) {
+export function upsertValve(id, setpoint, heating, temperature, roomId, manualSetpoint) {
     const stmt = db.prepare(`
-    INSERT INTO valves (id, setpoint, heating, status, last_seen, temperature, room_id)
-    VALUES (?, ?, ?, 'ONLINE', CURRENT_TIMESTAMP, ?, ?)
+    INSERT INTO valves (id, setpoint, manual_setpoint, heating, status, last_seen, temperature, room_id)
+    VALUES (?, ?, ?, 'ONLINE', CURRENT_TIMESTAMP, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       setpoint = excluded.setpoint,
+      manual_setpoint = COALESCE(excluded.manual_setpoint, manual_setpoint),
       heating = excluded.heating,
       status = 'ONLINE',
       last_seen = CURRENT_TIMESTAMP,
       temperature = COALESCE(excluded.temperature, temperature),
       room_id = COALESCE(excluded.room_id, room_id)
   `);
-    stmt.run(id, setpoint, heating ? 1 : 0, temperature || null, roomId || null);
+    stmt.run(id, setpoint, manualSetpoint || null, heating ? 1 : 0, temperature || null, roomId || null);
 }
 // aggiorna lo status della valvola
 export function updateValveStatus(id, status) {
@@ -121,7 +122,7 @@ export function getRoomAnalytics() {
       rooms.name,
       rooms.global_setpoint,
       COUNT(valves.id) AS valve_count,
-      ROUND(AVG(valves.temperature), 2) AS avg_temperature,
+      ROUND(AVG(COALESCE(valves.temperature, 0)), 2) AS avg_temperature,
       SUM(CASE WHEN valves.heating = 1 THEN 1 ELSE 0 END) AS heating_on_count
     FROM rooms
     LEFT JOIN valves ON valves.room_id = rooms.id

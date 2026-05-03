@@ -224,6 +224,8 @@ curl http://localhost:8081/valve1/properties
 
 ## Note utili
 
+    - **Setpoint stanza** prevale su manuale per valvole assegnate (propagazione automatica).
+    - **Setpoint manuali** solo per valvole libere (no room_id).
 - **DB**: `thermostat.db`
 - **Valvole**: `valveN` pattern
 - **Offline**: >30s no data

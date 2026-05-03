@@ -1,6 +1,6 @@
 import mqtt from "mqtt";
 import dotenv from "dotenv";
-import { upsertValve, insertTemperature, updateValveStatus, getRoomById, assignValveToRoom as persistValveRoomAssignment } from "../db/repository.js";
+import { upsertValve, insertTemperature, updateValveStatus, getRoomById, assignValveToRoom as persistValveRoomAssignment, setValveManualSetpoint, getValveManualSetpoint } from "../db/repository.js";
 import db from "../db/database.js";
 import { fileURLToPath } from "url";
 dotenv.config();
@@ -86,6 +86,34 @@ export function startController() {
         valves[valveId].lastSeen = Date.now();
         insertTemperature(valveId, temperature);
         console.log(`🌡️ ${valveId}: ${temperature}°C`);
+
+        // Sync setpoint from room if assigned and no manual override in DB
+        if (!valves[valveId].roomId) {
+          const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId);
+          valves[valveId].roomId = valveFromDb?.room_id || undefined;
+        }
+
+        const roomId = valves[valveId].roomId;
+        const manualFromDb = getValveManualSetpoint(valveId);
+        if (manualFromDb !== null) {
+          // Use manual setpoint from DB
+          if (Math.abs(valves[valveId].setpoint - manualFromDb) > 0.01) {
+            console.log(`📋 ${valveId}: using manual setpoint ${manualFromDb}°C from DB`);
+            valves[valveId].setpoint = manualFromDb;
+            valves[valveId].manualSetpoint = true;
+          }
+        } else if (roomId) {
+          // No manual, sync from room
+          const room = getRoomById(roomId);
+          const roomSetpoint = room?.global_setpoint ?? DEFAULT_SETPOINT;
+          if (Math.abs(valves[valveId].setpoint - roomSetpoint) > 0.01) {
+            console.log(`🔄 ${valveId}: sync setpoint to room "${roomId}" → ${roomSetpoint}°C (was ${valves[valveId].setpoint}°C)`);
+            valves[valveId].setpoint = roomSetpoint;
+            valves[valveId].manualSetpoint = false;
+            upsertValve(valveId, roomSetpoint, valves[valveId].heating, valves[valveId].temperature, roomId, null);
+          }
+        }
+
         const now = Date.now();
         // CONTROLLA SE C'È UN OVERRIDE ATTIVO
         if (overrides[valveId] && overrides[valveId].endTime > now) {

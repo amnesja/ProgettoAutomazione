@@ -130,8 +130,8 @@ describe("repository (SQLite)", () => {
     assert.equal(analytics.length, 1);
     assert.equal(analytics[0].id, "room1");
     assert.equal(analytics[0].valve_count, 2);
-    assert.equal(analytics[0].heating_on_count, 1);
-    // AVG(20.0, 22.0) = 21.0 (rounded 2)
+    assert.ok(analytics[0].heating_on_count === 1);
+    // AVG(20.0, 22.0) = 21.0 
     assert.equal(analytics[0].avg_temperature, 21);
   });
 

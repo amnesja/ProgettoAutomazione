@@ -15,7 +15,7 @@ import {
   deleteValve,
   deleteRoom
 } from "../db/repository.js";
-import { setOverride, getActiveOverrides, cancelOverride, assignValveRoom, removeValve } from "../controller/controller.js";
+import { setOverride, getActiveOverrides, cancelOverride, assignValveRoom, removeValve, setManualSetpoint } from "../controller/controller.js";
 import { env } from "../config/env.js";
 
 const VALID_VALVE_ID = /^valve\d+$/i;
@@ -59,6 +59,7 @@ export function createApiApp(options: { serveFrontend: boolean }) {
     }
 
     updateSetpoint(valveId, setpoint);
+    setManualSetpoint(valveId, setpoint);
 
     res.json({ message: "Setpoint updated", valveId, setpoint });
   });
@@ -166,13 +167,16 @@ export function createApiApp(options: { serveFrontend: boolean }) {
 
   // PUT /rooms/:id/setpoint → aggiorna setpoint globale stanza
   app.put("/rooms/:id/setpoint", (req, res) => {
+    const id = req.params.id;
     const { setpoint } = req.body as { setpoint?: unknown };
 
     if (typeof setpoint !== "number") {
       return res.status(400).json({ error: "setpoint must be a number" });
     }
 
-
+    updateRoomSetpoint(id, setpoint);
+    const changes = propagateRoomSetpoint(id);
+    res.json({ message: "Room setpoint updated", id, setpoint, propagated: changes });
   });
 
   // PUT /valves/:valveId/room → assegna valvola a stanza
