@@ -127,9 +127,26 @@ export function startController() {
 
     insertTemperature(valveId, temperature);
 
-    console.log(`🌡️ ${valveId}: ${temperature}°C`);
+console.log(`🌡️ ${valveId}: ${temperature}°C`);
 
-    const now = Date.now();
+// Always sync setpoint from room if assigned (every update)
+if (!valves[valveId].roomId) {
+  const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as { room_id?: string } | undefined;
+  valves[valveId].roomId = valveFromDb?.room_id || undefined;
+}
+
+const roomId = valves[valveId].roomId;
+if (roomId) {
+  const room = getRoomById(roomId) as { global_setpoint?: number } | undefined;
+  const roomSetpoint = room?.global_setpoint ?? DEFAULT_SETPOINT;
+  if (Math.abs(valves[valveId].setpoint - roomSetpoint) > 0.01) {
+    console.log(`🔄 ${valveId}: sync setpoint to room "${roomId}" → ${roomSetpoint}°C (was ${valves[valveId].setpoint}°C)`);
+    valves[valveId].setpoint = roomSetpoint;
+    upsertValve(valveId, roomSetpoint, valves[valveId].heating, valves[valveId].temperature, roomId);
+  }
+}
+
+const now = Date.now();
 
     // CONTROLLA SE C'È UN OVERRIDE ATTIVO
     if (overrides[valveId] && overrides[valveId].endTime > now) {

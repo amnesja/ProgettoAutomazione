@@ -67,10 +67,30 @@ export function updateSetpoint(id: string, setpoint: number) {
     return;
   }
 
+  const valveRow = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(id) as { room_id: string | null } | undefined;
+  if (valveRow?.room_id != null) {
+    throw new Error(`Cannot update setpoint for valve "${id}" assigned to room "${valveRow.room_id}". Update room setpoint or propagate.`);
+  }
+
   const stmt = db.prepare(`
     UPDATE valves SET setpoint = ? WHERE id = ?
   `);
   stmt.run(setpoint, id);
+}
+
+export function propagateRoomSetpoint(roomId: string): number {
+  const room = getRoomById(roomId) as { global_setpoint?: number } | undefined;
+  if (!room?.global_setpoint) {
+    throw new Error(`Invalid room "${roomId}" or missing global_setpoint`);
+  }
+
+  const setpoint = room.global_setpoint;
+  const stmt = db.prepare(`
+    UPDATE valves SET setpoint = ? WHERE room_id = ?
+  `);
+  const result = stmt.run(setpoint, roomId);
+  console.log(`🔄 Propagated ${setpoint}°C to ${result.changes || 0} valves in room "${roomId}"`);
+  return result.changes || 0;
 }
 
 // cancella valvola 
@@ -111,29 +131,45 @@ export function updateRoomSetpoint(id: string, setpoint: number) {
   stmt.run(setpoint, id);
 }
 
-export function assignValveToRoom(valveId: string, roomId: string) {
+
+export function assignValveToRoom(valveId: string, roomId: string | null) {
   if (!isValidValveId(valveId)) {
     return null;
   }
 
-  const room = roomId ? getRoomById(roomId) as any : null;
-  const setpoint = room?.global_setpoint ?? 20;
+  if (roomId) {
+    const room = getRoomById(roomId) as any;
+    const setpoint = room?.global_setpoint ?? 20;
 
-  const stmt = db.prepare(`
-    INSERT INTO valves (id, setpoint, heating, status, last_seen, room_id)
-    VALUES (?, ?, 0, 'OFFLINE', CURRENT_TIMESTAMP, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      setpoint = excluded.setpoint,
-      room_id = excluded.room_id,
-      last_seen = CURRENT_TIMESTAMP
-  `);
-  stmt.run(valveId, setpoint, roomId || null);
+    const stmt = db.prepare(`
+      INSERT INTO valves (id, setpoint, heating, status, last_seen, room_id)
+      VALUES (?, ?, 0, 'OFFLINE', CURRENT_TIMESTAMP, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        setpoint = excluded.setpoint,
+        room_id = excluded.room_id,
+        last_seen = CURRENT_TIMESTAMP
+    `);
+    stmt.run(valveId, setpoint, roomId);
 
-  return {
-    roomId: roomId || null,
-    setpoint
-  };
+    return {
+      roomId,
+      setpoint
+    };
+  } else {
+    // Unassign: remove room_id, keep setpoint
+    const stmt = db.prepare("UPDATE valves SET room_id = NULL WHERE id = ?");
+    stmt.run(valveId);
+
+    const currentValve = db.prepare("SELECT setpoint FROM valves WHERE id = ?").get(valveId) as { setpoint: number } | undefined;
+    const setpoint = currentValve?.setpoint ?? 20;
+
+    return {
+      roomId: null,
+      setpoint
+    };
+  }
 }
+
 
 export function getValvesByRoom(roomId: string) {
   return db

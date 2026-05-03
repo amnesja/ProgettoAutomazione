@@ -9,6 +9,7 @@ import {
   getRooms,
   getRoomById,
   updateRoomSetpoint,
+  propagateRoomSetpoint,
   getValvesByRoom,
   getRoomAnalytics,
   deleteValve,
@@ -171,9 +172,7 @@ export function createApiApp(options: { serveFrontend: boolean }) {
       return res.status(400).json({ error: "setpoint must be a number" });
     }
 
-    updateRoomSetpoint(req.params.id, setpoint);
 
-    res.json({ message: "Room setpoint updated", id: req.params.id, setpoint });
   });
 
   // PUT /valves/:valveId/room → assegna valvola a stanza
