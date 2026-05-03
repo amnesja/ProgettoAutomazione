@@ -48,11 +48,13 @@ async function renderSettingsPage() {
   let valveId = window.selectedValve || localStorage.getItem("settingsSelectedValve");
   const container = document.getElementById("settingsContent");
 
+
   const baseUrl = "http://localhost:8081";
 
-// Lista valvole dal WoT
-  const valveList = await fetchJson(`${baseUrl}/valvedirectory/properties/valves`);
-  const valves = Array.isArray(valveList) ? valveList : [];
+  // Lista valvole dal DB
+  const valveListDb = await fetchJson("/valves");
+  const valves = valveListDb.map(v => v.id).filter(id => VALID_VALVE_ID.test(id));
+
 
   if (valveId && !valves.includes(valveId)) {
     valveId = null;

@@ -692,3 +692,30 @@ body.dashboard-dark .settings-header {
     display: none;
   }
 }
+
+/* Dark mode rooms modal fix */
+body.dashboard-dark .modal-content {
+  background-color: var(--dash-surface-strong) !important;
+  color: var(--dash-text) !important;
+}
+body.dashboard-dark .modal-header {
+  border-bottom-color: var(--dash-border) !important;
+}
+body.dashboard-dark .modal-body {
+  color: var(--dash-text) !important;
+}
+body.dashboard-dark .form-label {
+  color: var(--dash-text) !important;
+}
+body.dashboard-dark .form-control {
+  color: var(--dash-text) !important;
+  background-color: var(--dash-surface-strong) !important;
+  border-color: var(--dash-border) !important;
+}
+body.dashboard-dark .form-control::placeholder {
+  color: var(--dash-muted) !important;
+}
+body.dashboard-dark .btn-close {
+  filter: invert(1) !important;
+}
+

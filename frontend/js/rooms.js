@@ -120,11 +120,12 @@ function renderRoomsList() {
           ${valveBadges}
         </div>
 
+
         <div class="rooms-card-actions">
-          <button class="btn btn-outline-secondary btn-sm" onclick="viewRoomValves('${room.id}')">Dettaglio Valvole</button>
           <button class="btn btn-warning btn-sm" onclick="editRoomSetpoint('${room.id}')">Modifica Setpoint</button>
           <button class="btn btn-danger btn-sm" onclick="deleteRoom('${room.id}')">Elimina</button>
         </div>
+
       </article>
     `;
   }).join("");
@@ -163,15 +164,9 @@ function setupRoomForm() {
   });
 }
 
-function viewRoomValves(roomId) {
-  const room = roomsPageData.find((item) => item.id === roomId);
-  if (!room) {
-    return;
-  }
 
-  const valveNames = room.valves.length ? room.valves.map((valve) => valve.id).join(", ") : "nessuna valvola assegnata";
-  renderRoomsMessage(`Valvole in ${room.name}: ${valveNames}.`, "info");
-}
+
+
 
 async function editRoomSetpoint(roomId) {
   const room = roomsPageData.find((item) => item.id === roomId);

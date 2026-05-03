@@ -8,6 +8,10 @@ function isValidValveId(id: string) {
 
 // salva o aggiorna valvola
 export function upsertValve(id: string, setpoint: number, heating: boolean, temperature?: number, roomId?: string, manualSetpoint?: number | null) {
+  // Preserve room_id if not explicitly provided (fix race)
+  const currentRoom = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(id) as { room_id?: string } | null;
+  const safeRoomId = roomId ?? currentRoom?.room_id;
+
   const stmt = db.prepare(`
     INSERT INTO valves (id, setpoint, manual_setpoint, heating, status, last_seen, temperature, room_id)
     VALUES (?, ?, ?, 'ONLINE', CURRENT_TIMESTAMP, ?, ?, ?)
@@ -18,10 +22,11 @@ export function upsertValve(id: string, setpoint: number, heating: boolean, temp
       status = 'ONLINE',
       last_seen = CURRENT_TIMESTAMP,
       temperature = COALESCE(excluded.temperature, temperature),
-      room_id = COALESCE(excluded.room_id, room_id)
+      room_id = COALESCE(excluded.room_id, valves.room_id)
   `);
 
-  stmt.run(id, setpoint, manualSetpoint || null, heating ? 1 : 0, temperature || null, roomId || null);
+  stmt.run(id, setpoint, manualSetpoint || null, heating ? 1 : 0, temperature || null, safeRoomId || null);
+  console.log(`🔧 upsertValve [${id}]: setpoint=${setpoint}, room_id="${safeRoomId ?? 'NULL'}", temp=${temperature ?? 'N/A'}`);
 }
 
 // aggiorna lo status della valvola (e resetta heating quando va offline)
@@ -162,37 +167,46 @@ export function assignValveToRoom(valveId: string, roomId: string | null) {
     return null;
   }
 
+  db.exec("BEGIN IMMEDIATE");
+  try {
     if (roomId) {
       const room = getRoomById(roomId) as any;
-      const setpoint = room?.global_setpoint ?? 20;
+      if (!room) throw new Error(`Room ${roomId} not found`);
 
-      const stmt = db.prepare(`
-        INSERT INTO valves (id, setpoint, manual_setpoint, heating, status, last_seen, room_id)
-        VALUES (?, ?, NULL, 0, 'OFFLINE', CURRENT_TIMESTAMP, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          setpoint = excluded.setpoint,
-          manual_setpoint = NULL,
-          room_id = excluded.room_id,
-          last_seen = CURRENT_TIMESTAMP
-      `);
-      stmt.run(valveId, setpoint, roomId);
+      const setpoint = room.global_setpoint ?? 20;
+
+      // Atomic assign (update or insert)
+      let result;
+      const updStmt = db.prepare(`UPDATE valves SET room_id = ?, setpoint = ?, manual_setpoint = NULL WHERE id = ?`);
+      result = updStmt.run(roomId, setpoint, valveId);
+      if (result.changes === 0) {
+        const insStmt = db.prepare(`INSERT INTO valves (id, setpoint, manual_setpoint, heating, status, last_seen, room_id) VALUES (?, ?, NULL, 0, 'OFFLINE', CURRENT_TIMESTAMP, ?)`);
+        insStmt.run(valveId, setpoint, roomId);
+        console.log(`📦 [${valveId}] DB INSERT + assign to "${roomId}" setpoint=${setpoint}`);
+      } else {
+        console.log(`📦 [${valveId}] DB UPDATE assign to "${roomId}" setpoint=${setpoint} changes=1`);
+      }
+
+      db.exec("COMMIT");
+      return { roomId, setpoint };
+    } else {
+      const stmt = db.prepare("UPDATE valves SET room_id = NULL WHERE id = ?");
+      const result = stmt.run(valveId);
+      console.log(`📦 [${valveId}] DB unassign: changes=${result.changes}`);
+      db.exec("COMMIT");
+
+      const currentValve = db.prepare("SELECT setpoint FROM valves WHERE id = ?").get(valveId) as { setpoint: number } | undefined;
+      const setpoint = currentValve?.setpoint ?? 20;
 
       return {
-        roomId,
+        roomId: null,
         setpoint
       };
-    } else {
-    // Unassign: remove room_id, keep setpoint
-    const stmt = db.prepare("UPDATE valves SET room_id = NULL WHERE id = ?");
-    stmt.run(valveId);
-
-    const currentValve = db.prepare("SELECT setpoint FROM valves WHERE id = ?").get(valveId) as { setpoint: number } | undefined;
-    const setpoint = currentValve?.setpoint ?? 20;
-
-    return {
-      roomId: null,
-      setpoint
-    };
+    }
+  } catch (err) {
+    db.exec("ROLLBACK");
+    console.error(`❌ [${valveId}] Assign transaction failed:`, err);
+    return null;
   }
 }
 

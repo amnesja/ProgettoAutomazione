@@ -38,7 +38,7 @@ let mqttClient: mqtt.MqttClient | null = null;
 let offlineIntervalId: NodeJS.Timeout | null = null;
 
 const DEFAULT_SETPOINT = 20;
-const HYSTERESIS = 1;
+const HYSTERESIS = 0.5; // 0.5°C di isteresi per evitare accensioni/spegnimenti frequenti
 const OFFLINE_TIMEOUT = 30000; // 30 secondi senza dati = OFFLINE
 
 function publishHeatingCommand(valveId: string, heating: boolean) {
@@ -92,10 +92,12 @@ export function startController() {
     if (!valves[valveId]) {
       const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as { room_id?: string } | undefined;
       const roomId = valveFromDb?.room_id;
+      console.log(`🗄️ [${valveId}] First init: DB room_id="${roomId || 'NULL'}"`);
 
       let setpoint = DEFAULT_SETPOINT;
       if (roomId) {
         const room = getRoomById(roomId) as { global_setpoint?: number } | undefined;
+        console.log(`🗄️ [${valveId}] First init room "${roomId}": setpoint=${room?.global_setpoint ?? 'NULL'}`);
         if (room) setpoint = room.global_setpoint ?? DEFAULT_SETPOINT;
       }
 
@@ -112,6 +114,7 @@ export function startController() {
       };
 
       upsertValve(valveId, setpoint, shouldHeat, temperature, roomId);
+      console.log(`🆕 [${valveId}] First upsert: setpoint=${setpoint}, roomId="${roomId || 'NULL'}"`);
       if (shouldHeat) {
         publishHeatingCommand(valveId, true);
       }
@@ -140,20 +143,24 @@ console.log(`🌡️ ${valveId}: ${temperature}°C`);
           valves[valveId].manualSetpoint = true;
         }
       } else {
-        // Reload room only if no manual
-        if (!valves[valveId].roomId) {
-          const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as { room_id?: string } | undefined;
-          valves[valveId].roomId = valveFromDb?.room_id || undefined;
+        // Always reload room from DB (fix assignment cache)
+        const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as { room_id?: string } | undefined;
+        const dbRoomId = valveFromDb?.room_id || '';
+        if (dbRoomId !== valves[valveId].roomId) {
+          console.log(`🔄 [${valveId}] roomId reloaded "${valves[valveId].roomId || 'NULL'} " → "${dbRoomId}"`);
+          valves[valveId].roomId = dbRoomId;
         }
         const roomId = valves[valveId].roomId;
         if (roomId) {
-          const room = getRoomById(roomId) as { global_setpoint?: number } | undefined;
+          const room = getRoomById(roomId) as any;
           const roomSetpoint = room?.global_setpoint ?? DEFAULT_SETPOINT;
+          console.log(`🔍 [${valveId}] Sync check: roomId="${roomId}", roomName="${room?.name || 'MISSING'}", roomSetpoint=${roomSetpoint} (current=${valves[valveId].setpoint})`);
           if (Math.abs(valves[valveId].setpoint - roomSetpoint) > 0.01) {
             console.log(`🔄 ${valveId}: sync setpoint to room "${roomId}" → ${roomSetpoint}°C (was ${valves[valveId].setpoint}°C)`);
             valves[valveId].setpoint = roomSetpoint;
             valves[valveId].manualSetpoint = false;
             upsertValve(valveId, roomSetpoint, valves[valveId].heating, valves[valveId].temperature, roomId, null);
+            console.log(`🔄 [${valveId}] Synced to room "${roomId}" setpoint=${roomSetpoint}`);
           }
         }
       }
@@ -271,6 +278,7 @@ export function assignValveRoom(valveId: string, roomId?: string | null) {
   const assignment = persistValveRoomAssignment(valveId, roomId || "");
   if (!assignment) return null;
 
+  console.log(`📝 [${valveId}] assignValveRoom: DB result roomId="${assignment.roomId || 'null'}", setpoint=${assignment.setpoint}, valveActive=${!!valves[valveId]}`);
   const valve = valves[valveId];
   if (valve) {
     valve.roomId = assignment.roomId || undefined;
