@@ -90,12 +90,13 @@ async function loadValves(issues) {
     valves = await Promise.all(
       valveIds.map(async (id) => {
         const dbValve = dbValveMap[id] || {};
+
         const liveState = await loadValveLiveState(baseUrl, id);
 
         return {
           id,
           temperature: liveState.temperature ?? numberOrFallback(dbValve.temperature, 0),
-          heating: liveState.heating ?? Boolean(dbValve.heating),
+          heating: liveState.heating !== undefined ? liveState.heating : Boolean(dbValve.heating && isRecent(dbValve.last_seen)),
           setpoint: numberOrFallback(dbValve.setpoint, 20),
           last_seen: dbValve.last_seen || new Date().toLocaleTimeString(),
           room_id: pendingRoomSelections[id] ?? dbValve.room_id ?? ""
@@ -104,6 +105,7 @@ async function loadValves(issues) {
     );
   } catch (err) {
     valves = [];
+
     issues.push("Valvole non disponibili");
     console.error("Errore caricamento valvole:", err);
   }
@@ -538,11 +540,21 @@ function formatLastSeen(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("it-IT");
 }
 
+
 function numberOrFallback(value, fallback) {
   return typeof value === "number" && !Number.isNaN(value) ? value : fallback;
 }
 
+function isRecent(last_seen) {
+  if (!last_seen) return false;
+  const ageMs = Date.now() - new Date(last_seen).getTime();
+  return ageMs < 300000; // 5 minuti
+}
+
+
+
 async function assignValveRoom(valveId) {
+
   const select = document.getElementById(`room-select-${valveId}`);
   const roomId = select.value;
 
