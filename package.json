@@ -3,17 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-"scripts": {
-    "wot": "tsx backend/src/wot/things.ts",
-    "test": "tsx --test backend/src/tests/**/*.test.ts",
-    "test:types": "tsc --noEmit -p backend/tsconfig.json",
-    "dev": "tsx backend/src/api/server.ts",
-    "dev:api": "tsx backend/src/api/server-api.ts",
-    "controller": "tsx backend/src/controller/controller.ts",
-    "simulator": "tsx backend/src/simulator/valveSimulator.ts",
-    "build": "tsc -p backend/tsconfig.json",
-"start": "node backend/dist/src/api/server.js",
-    "start:api": "node backend/dist/src/api/server-api.js"
+  "scripts": {
+    "wot": "tsx src/wot/things.ts",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tsx src/api/server.ts",
+    "controller": "tsx src/controller/controller.ts",
+    "simulator": "tsx src/simulator/valveSimulator.ts",
+    "build": "tsc",
+    "start": "node dist/api/server.js"
   },
   "repository": {
     "type": "git",

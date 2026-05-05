@@ -12,6 +12,5 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["scripts/**/*"],
-  "exclude": ["backend/**/*", "frontend/**/*"]
+  "include": ["src/**/*", "scripts/**/*"]
 }
