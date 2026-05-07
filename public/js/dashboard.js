@@ -515,7 +515,6 @@ function renderTable() {
       <td>${formatLastSeen(valve.last_seen)}</td>
       <td>
         <button class="btn btn-sm btn-success" onclick="assignValveRoom('${valve.id}')">Assegna</button>
-        <div class="small text-muted mt-1">${roomName}</div>
       </td>
     `;
 

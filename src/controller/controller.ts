@@ -53,20 +53,20 @@ client.on("connect", () => {
 client.on("message", (topic, message) => {
   const data = JSON.parse(message.toString());
 
-  // estrai valveId dal topic
+  //  Estrazione e validazione ID Valvola
   const match = topic.match(/home\/valves\/(.+)\/temperature/);
   if (!match) return;
 
   const valveId = match[1]!;
-  if (!valveId) return;
-  if (!VALID_VALVE_ID.test(valveId)) {
-    console.warn(`Ignoring invalid valve id: ${valveId}`);
-    return;
-  }
-  const temperature = parseFloat(data.temperature);
+  if (!valveId || !VALID_VALVE_ID.test(valveId)) return;
 
+  const temperature = parseFloat(data.temperature);
+  
+  // Flag di sincronizzazione: Questa variabile ci dice se dobbiamo forzare l'invio del comando MQTT
+  let isReturningOnline = false; 
+
+  // Gestione Stato Iniziale e Rientro Offline
   if (!valves[valveId]) {
-    // Ottieni roomId dalla DB se esiste
     const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as any;
     const roomId = valveFromDb?.room_id;
     let setpoint = DEFAULT_SETPOINT;
@@ -74,70 +74,74 @@ client.on("message", (topic, message) => {
       const room = getRoomById(roomId) as any;
       if (room) setpoint = room.global_setpoint;
     }
+    // Creazione in RAM
     valves[valveId] = { temperature, heating: false, setpoint, lastSeen: Date.now(), status: 'ONLINE', roomId };
     upsertValve(valveId, setpoint, false, temperature, roomId);
+    
+    isReturningOnline = true; // Nuova valvola: allineiamo subito il simulatore
   } else {
-    // se era offline, torna online
     if (valves[valveId].status === 'OFFLINE') {
       valves[valveId].status = 'ONLINE';
       updateValveStatus(valveId, 'ONLINE');
-      console.log(`✅ ${valveId}: BACK ONLINE`);
+      console.log(`✅ ${valveId}: BACK ONLINE - Sincronizzazione in corso...`);
+      
+      isReturningOnline = true; // Era offline: forziamo il comando per riallineare il simulatore fisico
     }
   }
 
+  // Aggiornamento dati correnti
   valves[valveId].temperature = temperature;
   valves[valveId].lastSeen = Date.now();
-
   insertTemperature(valveId, temperature);
 
-  console.log(`🌡️ ${valveId}: ${temperature}°C`);
+  console.log(`🌡️ [${valveId}] Temp: ${temperature}°C - Setpoint: ${valves[valveId].setpoint}°C`);
 
-  // CONTROLLA SE C'È UN OVERRIDE ATTIVO
+  // Gestione LOGICA (Override o Automatica)
   const now = Date.now();
+  
   if (overrides[valveId] && overrides[valveId].endTime > now) {
-    // override ancora valido
+    // --- LOGICA OVERRIDE ---
     const overrideState = overrides[valveId].state;
     const currentState = valves[valveId].heating;
     
-    if (overrideState !== currentState) {
+    // Inviamo il comando se lo stato cambia O se la valvola è appena tornata online
+    if (overrideState !== currentState || isReturningOnline) {
       valves[valveId].heating = overrideState;
       upsertValve(valveId, valves[valveId].setpoint, overrideState, temperature);
-      const payload = JSON.stringify({ heating: overrideState });
-      client.publish(`home/valves/${valveId}/command`, payload);
-      console.log(`⚠️ OVERRIDE ${valveId}: heating = ${overrideState} (scade in ${Math.floor((overrides[valveId].endTime - now) / 1000)}s)`);
-    } else {
-      console.log(`⚠️ OVERRIDE ${valveId}: heating = ${overrideState} (scade in ${Math.floor((overrides[valveId].endTime - now) / 1000)}s)`);
+      client.publish(`home/valves/${valveId}/command`, JSON.stringify({ heating: overrideState }));
+      console.log(`⚠️ [${valveId}] OVERRIDE FORZATO: heating = ${overrideState}`);
     }
   } else {
-    // override scaduto o non esiste, rimuovi se esiste
+    // --- LOGICA AUTOMATICA (ISTERESI) ---
     if (overrides[valveId]) {
       clearTimeout(overrides[valveId].timeoutId);
       delete overrides[valveId];
-      console.log(`🔄 ${valveId}: override scaduto, logica automatica ripresa`);
+      console.log(`🔄 [${valveId}] Override scaduto, ripresa logica automatica`);
     }
 
-    // LOGICA CON ISTERESI
     const setpoint = valves[valveId].setpoint;
     let currentState = valves[valveId].heating;
     let newState = currentState;
 
+    // Calcolo Isteresi
     if (temperature < setpoint - HYSTERESIS) {
       newState = true;
     } else if (temperature > setpoint + HYSTERESIS) {
       newState = false;
     }
 
-    // aggiorna solo se cambia
-    if (newState !== currentState) {
+    // --- DECISIONE DI INVIO COMANDO ---
+    // Aggiungendo "|| isReturningOnline", risolviamo il bug del simulatore che non partiva
+    if (newState !== currentState || isReturningOnline) {
       valves[valveId].heating = newState;
       upsertValve(valveId, setpoint, newState, temperature);
+      
       const payload = JSON.stringify({ heating: newState });
-
       client.publish(`home/valves/${valveId}/command`, payload);
 
-      console.log(`🔥 ${valveId}: heating = ${newState}`);
+      console.log(`🔥 [${valveId}] COMANDO INVIATO: heating = ${newState} (Motivo: ${isReturningOnline ? 'Sincro Online' : 'Cambio Temp'})`);
     } else {
-      console.log(`⏸️ ${valveId}: no change (${temperature}°C)`);
+      console.log(`⏸️ [${valveId}] Stato invariato (${temperature}°C)`);
     }
   }
 });
