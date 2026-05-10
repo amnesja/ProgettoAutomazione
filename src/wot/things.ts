@@ -12,7 +12,8 @@ const mqttClient = mqtt.connect(brokerUrl);
 
 
 //  Creazione del Servient Wot + HTTP Server 
-const httpServer = new HttpServer({ port: 8081 });
+const WOT_PORT = Number(process.env.WOT_PORT || 8081);
+const httpServer = new HttpServer({ port: WOT_PORT });
 
 const servient = new Servient();
 servient.addServer(httpServer);

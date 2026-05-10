@@ -224,17 +224,30 @@ body.dashboard-dark .btn-close {
 }
 
 .dashboard-spotlight {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.9rem;
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
 }
+
+.dashboard-panel{
+  display:flex;
+  flex-direction:column;
+  height:100%;
+}
+
 
 .dashboard-spotlight-card {
   padding: 1rem;
   border-radius: 8px;
   background: linear-gradient(145deg, var(--dash-accent-soft), rgba(255, 255, 255, 0.02));
   border: 1px solid var(--dash-border);
+  display:flex;
+  flex-direction:column;
+  height:100%;
 }
+
 
 .dashboard-spotlight-title {
   margin: 0;
@@ -426,6 +439,14 @@ body.dashboard-dark .dashboard-theme-toggle:hover {
   box-shadow: var(--dash-shadow);
 }
 
+/* Allineamento interno card stanze */
+.rooms-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+
 .rooms-empty-state {
   grid-column: 1 / -1;
   text-align: center;
@@ -484,14 +505,20 @@ body.dashboard-dark .dashboard-theme-toggle:hover {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 1rem;
+
+  /* Opzione 2: normalizza altezza badges per evitare card “storte” */
+  max-height: 3.2rem; /* ~2 righe di pills */
+  overflow: hidden;
 }
+
 
 .rooms-card-actions {
   display: flex;
   gap: 0.65rem;
-  margin-top: 1rem;
+  margin-top: auto;
   flex-wrap: wrap;
 }
+
 
 .rooms-modal {
   border-radius: 8px;

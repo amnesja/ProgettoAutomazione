@@ -1,4 +1,6 @@
 import db from "./database.js";
+import { logEvent } from "../utils/logger.js";
+
 
 const VALID_VALVE_ID = /^valve\d+$/i;
 
@@ -71,7 +73,10 @@ export function updateSetpoint(id: string, setpoint: number) {
     UPDATE valves SET setpoint = ? WHERE id = ?
   `);
   stmt.run(setpoint, id);
+
+  logEvent("SETPOINT_CHANGED", { valveId: id, setpoint, manual: false });
 }
+
 
 // cancella valvola 
 export function deleteValve(id: string) {
@@ -84,7 +89,10 @@ export function deleteValve(id: string) {
 
   // elimina la valvola
   db.prepare("DELETE FROM valves WHERE id = ?").run(id);
+
+  logEvent("VALVE_DELETED", { valveId: id });
 }
+
 
 
 // Funzioni per stanze
@@ -93,8 +101,13 @@ export function createRoom(id: string, name: string, description?: string, globa
     INSERT INTO rooms (id, name, description, global_setpoint)
     VALUES (?, ?, ?, ?)
   `);
-  stmt.run(id, name, description || null, globalSetpoint || 20);
+
+  const setpoint = globalSetpoint || 20;
+  stmt.run(id, name, description || null, setpoint);
+
+  logEvent("ROOM_CREATED", { roomId: id, name, setpoint });
 }
+
 
 export function getRooms() {
   return db.prepare("SELECT * FROM rooms").all();
@@ -129,11 +142,20 @@ export function assignValveToRoom(valveId: string, roomId: string) {
   `);
   stmt.run(valveId, setpoint, roomId || null);
 
+  const assignedRoomId = roomId || null;
+
+  if (assignedRoomId) {
+    logEvent("VALVE_ASSIGNED", { valveId, roomId: assignedRoomId, setpoint });
+  } else {
+    logEvent("VALVE_DETACHED", { valveId, roomId: null, setpoint });
+  }
+
   return {
-    roomId: roomId || null,
-    setpoint
+    roomId: assignedRoomId,
+    setpoint,
   };
 }
+
 
 export function getValvesByRoom(roomId: string) {
   return db
@@ -171,5 +193,10 @@ export function deleteRoom(id: string) {
   const deleteStmt = db.prepare(`
     DELETE FROM rooms WHERE id = ?
   `);
-  return deleteStmt.run(id);
+
+  const res = deleteStmt.run(id);
+  logEvent("ROOM_DELETED", { roomId: id, deleted: res.changes ?? null });
+
+  return res;
 }
+

@@ -1,9 +1,17 @@
 import mqtt from "mqtt";
 import dotenv from "dotenv";
-import { upsertValve, insertTemperature, updateValveStatus, getRoomById, assignValveToRoom as persistValveRoomAssignment } from "../db/repository.js";
+import {
+  upsertValve,
+  insertTemperature,
+  updateValveStatus,
+  getRoomById,
+  assignValveToRoom as persistValveRoomAssignment,
+} from "../db/repository.js";
 import db from "../db/database.js";
+import { logEvent } from "../utils/logger.js";
 
 dotenv.config();
+
 
 const brokerUrl = process.env.MQTT_BROKER || "mqtt://localhost:1883";
 const client = mqtt.connect(brokerUrl);
@@ -211,15 +219,29 @@ export function assignValveRoom(valveId: string, roomId?: string | null) {
     return null;
   }
 
+  // log lato runtime (solo se effetto/room è presente in memoria)
+  if (assignment.roomId) {
+    logEvent("VALVE_ASSIGNED", { valveId, roomId: assignment.roomId, setpoint: assignment.setpoint });
+  } else {
+    logEvent("VALVE_DETACHED", { valveId, roomId: null, setpoint: assignment.setpoint });
+  }
+
   const valve = valves[valveId];
   if (valve) {
     valve.roomId = assignment.roomId || undefined;
     valve.setpoint = assignment.setpoint;
-    upsertValve(valveId, assignment.setpoint, valve.heating, valve.temperature, assignment.roomId || undefined);
+    upsertValve(
+      valveId,
+      assignment.setpoint,
+      valve.heating,
+      valve.temperature,
+      assignment.roomId || undefined
+    );
   }
 
   return assignment;
 }
+
 
 // Controlla periodicamente se ci sono valvole offline
 setInterval(() => {
@@ -248,11 +270,15 @@ export function removeValve(valveId: string) {
   }
 
   console.log(`🗑️ Valvola ${valveId} rimossa dal controller`);
+  logEvent("VALVE_REMOVED_FROM_CONTROLLER", { valveId });
 }
+
 
 export function updateManualSetpoint(valveId: string, newSetpoint: number) {
   if (valves[valveId]) {
     valves[valveId].setpoint = newSetpoint;
     console.log(`🎯 Controller: Setpoint aggiornato in memoria per ${valveId} a ${newSetpoint}°C`);
+    logEvent("SETPOINT_CHANGED", { valveId, setpoint: newSetpoint, manual: true });
   }
 }
+

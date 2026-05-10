@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 
-const db = new Database("thermostat.db");
+const SQLITE_DB_PATH = process.env.SQLITE_DB_PATH || "thermostat.db";
+const db = new Database(SQLITE_DB_PATH);
 
 // creazione tabelle
 db.exec(`
