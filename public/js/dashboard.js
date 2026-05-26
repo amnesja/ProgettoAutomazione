@@ -1,7 +1,6 @@
 let valves = [];
 let rooms = [];
 let currentFilter = "";
-let dashboardRefreshTimer;
 let pendingRoomSelections = {};
 let selectedHistoryValveId = "";
 let historyChart;
@@ -11,16 +10,18 @@ let setpointGauge;
 
 const VALID_VALVE_ID = /^valve\d+$/i;
 
+// 🌟 LETTURA SICURA SENZA CONFLITTI: Recuperiamo gli endpoint globali definiti in app.js
+var API_BASE = window.REST_API_URL || "http://localhost:3001";
+var WOT_BASE = window.WOT_SERVER_URL || "http://localhost:8081";
+
 async function initDashboard() {
-  if (dashboardRefreshTimer) {
-    clearInterval(dashboardRefreshTimer);
+  // Pulizia accurata del vecchio timer registrato sulla finestra globale
+  if (window.dashboardRefreshTimer) {
+    clearInterval(window.dashboardRefreshTimer);
   }
 
   const searchInput = document.getElementById("searchInput");
-
-  if (!searchInput) {
-    throw new Error("dashboard search input not found");
-  }
+  if (!searchInput) return; // Uscita di sicurezza se non siamo sulla pagina corretta
 
   searchInput.value = currentFilter;
   searchInput.oninput = function () {
@@ -29,12 +30,16 @@ async function initDashboard() {
   };
 
   bindDashboardThemeRefresh();
-
   await refreshDashboardData();
-  dashboardRefreshTimer = setInterval(refreshDashboardData, 5000);
+  
+  // Assegnazione del loop di aggiornamento all'oggetto globale window
+  window.dashboardRefreshTimer = setInterval(refreshDashboardData, 5000);
 }
 
 async function refreshDashboardData() {
+  // Se non c'è il container delle metriche, significa che l'utente ha cambiato pagina: fermiamo le chiamate
+  if (!document.getElementById("dashboardMetrics")) return;
+
   const activeElement = document.activeElement;
   if (activeElement && activeElement.matches('select[data-role="room-select"]')) {
     return;
@@ -56,64 +61,65 @@ async function refreshDashboardData() {
   renderDashboardStatus(issues);
 }
 
+/**
+ * 🏢 CALL REST API (Express): Recupera le stanze dal database locale
+ */
 async function loadDashboardRooms(issues) {
   try {
-    const roomsData = await fetchJson("/rooms");
+    const roomsData = await fetchJson(`${API_BASE}/rooms`);
     rooms = Array.isArray(roomsData) ? roomsData : [];
   } catch (err) {
     rooms = [];
-    issues.push("Stanze non disponibili");
-    console.error("Errore caricamento stanze:", err);
+    issues.push("Stanze non disponibili (Express DB Offline)");
+    console.error("Errore caricamento stanze da Express:", err);
   }
 }
 
-// funzione che mostra le valvole nella sezione (Operativo Valvole).
+/**
+ * 📡 COMBINATO WOT DIRECTORY + REST API
+ */
 async function loadValves(issues) {
-  const baseUrl = "http://localhost:8081";
-
   try {
-    // recupero dal WoT della lista delle valvole attive 
     let wotValveIds = [];
     try {
-      wotValveIds = await fetchJson(`${baseUrl}/valvedirectory/properties/valves`);
+      // 📡 CALL WOT SERVER: Recupera l'elenco delle valvole attive direttamente dalla Directory del WoT
+      wotValveIds = await fetchJson(`${WOT_BASE}/valvedirectory/properties/valves`);
       if (!Array.isArray(wotValveIds)) wotValveIds = [];
     } catch (err) {
-      issues.push("Servizio WoT Offline");
+      issues.push("Servizio WoT Server Offline");
       valves = [];
       return; 
     }
 
-    // Filtraggio degli ID validi (es. valve1, valve2...) secondo la regex
     const activeIds = wotValveIds.filter(id => VALID_VALVE_ID.test(id));
-
     if (activeIds.length === 0) {
       valves = []; 
       return;
     }
 
-    // Recupero dei metadati dal DB e filtraggio di solo quelle con status "ONLINE"
-    const dbValves = await fetchJson("/valves").catch(() => []);
+    // 🏢 CALL REST API (Express): Chiede lo stato strutturale registrato nel DB amministrativo
+    const dbValves = await fetchJson(`${API_BASE}/valves`).catch(() => []);
     
-    // Creazione di una mappa con solo delle valvole che il DB conferma essere Online.
     const onlineDbValveMap = Object.fromEntries(
       dbValves
         .filter(v => v.status === "ONLINE")
         .map(v => [v.id, v])
     );
 
-    // Costruzione della lista finale: incrociando gli ID del WoT con la disponibilità reale nel DB
     valves = await Promise.all(
       activeIds
-        .filter(id => onlineDbValveMap[id]) // Esclusione delle valvole che il DB vede come Offline
+        .filter(id => onlineDbValveMap[id])
         .map(async (id) => {
           const dbInfo = onlineDbValveMap[id];
-          const liveState = await loadValveLiveState(baseUrl, id);
+          
+          // 📡 CALL WOT THING (Diretta): Interroga l'istanza specifica della valvola sul WoT per i dati fisici al volo
+          const liveState = await loadValveLiveState(id);
 
           return {
             id,
             temperature: liveState.temperature ?? numberOrFallback(dbInfo.temperature, 0),
             heating: liveState.heating ?? Boolean(dbInfo.heating),
-            setpoint: numberOrFallback(dbInfo.setpoint, 20),
+            setpoint: liveState.setpoint ?? numberOrFallback(dbInfo.setpoint, 20),
             last_seen: dbInfo.last_seen || new Date().toLocaleTimeString(),
             room_id: pendingRoomSelections[id] ?? dbInfo.room_id ?? ""
           };
@@ -122,30 +128,32 @@ async function loadValves(issues) {
 
   } catch (err) {
     valves = [];
-    issues.push("Errore nel caricamento dati");
+    issues.push("Errore nel caricamento dati integrati");
     console.error("Errore critico loadValves:", err);
   }
 }
 
-async function loadValveLiveState(baseUrl, valveId) {
+/**
+ * 📡 CALL WOT THING (Diretta): Scarica le proprietà in tempo reale della Thing WoT
+ */
+async function loadValveLiveState(valveId) {
   const thingName = `valve-${valveId}`;
-
   try {
-    const [tempRes, heatRes] = await Promise.all([
-      fetch(`${baseUrl}/${encodeURIComponent(thingName)}/properties/temperature`),
-      fetch(`${baseUrl}/${encodeURIComponent(thingName)}/properties/heating`)
+    const [tempRes, heatRes, setpointRes] = await Promise.all([
+      fetch(`${WOT_BASE}/${encodeURIComponent(thingName)}/properties/temperature`),
+      fetch(`${WOT_BASE}/${encodeURIComponent(thingName)}/properties/heating`),
+      fetch(`${WOT_BASE}/${encodeURIComponent(thingName)}/properties/setpoint`).catch(() => null)
     ]);
 
-    if (!tempRes.ok || !heatRes.ok) {
-      return {};
-    }
+    if (!tempRes.ok || !heatRes.ok) return {};
 
     return {
       temperature: Number(await tempRes.json()),
-      heating: Boolean(await heatRes.json())
+      heating: Boolean(await heatRes.json()),
+      setpoint: setpointRes && setpointRes.ok ? Number(await setpointRes.json()) : null
     };
   } catch (err) {
-    console.warn(`Thing WoT non disponibile per ${valveId}.`, err);
+    console.warn(`Thing WoT non raggiungibile per il real-time di ${valveId}.`, err);
     return {};
   }
 }
@@ -155,7 +163,6 @@ function ensureSelectedValve() {
     selectedHistoryValveId = "";
     return;
   }
-
   const found = valves.find((valve) => valve.id === selectedHistoryValveId);
   if (!found) {
     selectedHistoryValveId = valves[0].id;
@@ -164,9 +171,7 @@ function ensureSelectedValve() {
 
 function renderMetrics() {
   const container = document.getElementById("dashboardMetrics");
-  if (!container) {
-    throw new Error("dashboard metrics container not found");
-  }
+  if (!container) return; // Sgancio di sicurezza per la SPA
 
   const onlineCount = valves.filter((valve) => valve.last_seen && valve.temperature > 0).length;
   const heatingCount = valves.filter((valve) => valve.heating).length;
@@ -193,9 +198,7 @@ function renderMetrics() {
 
 function renderSpotlight() {
   const container = document.getElementById("valveSpotlight");
-  if (!container) {
-    throw new Error("dashboard spotlight container not found");
-  }
+  if (!container) return;
 
   if (!valves.length) {
     container.innerHTML = `
@@ -231,9 +234,7 @@ function renderSpotlight() {
 
 function renderHistoryValveSelect() {
   const select = document.getElementById("historyValveSelect");
-  if (!select) {
-    throw new Error("history valve select not found");
-  }
+  if (!select) return;
 
   select.innerHTML = valves.map((valve) => `
     <option value="${valve.id}" ${valve.id === selectedHistoryValveId ? "selected" : ""}>${valve.id}</option>
@@ -246,6 +247,7 @@ function renderHistoryValveSelect() {
 }
 
 async function renderCharts() {
+  if (!document.getElementById("historyChart")) return; // Protezione se l'utente ha cambiato visualizzazione
   await Promise.all([
     renderHistoryChart(),
     renderRoomsChart(),
@@ -254,14 +256,15 @@ async function renderCharts() {
   ]);
 }
 
+/**
+ * 🏢 CALL REST API (Express Storico): Interroga il database per l'estrazione cronologica
+ */
 async function renderHistoryChart() {
   const canvas = document.getElementById("historyChart");
-  if (!canvas) {
-    throw new Error("history chart canvas not found");
-  }
+  if (!canvas) return;
 
   const history = selectedHistoryValveId
-    ? await fetchJson(`/valves/${selectedHistoryValveId}/history`)
+    ? await fetchJson(`${API_BASE}/valves/${selectedHistoryValveId}/history`)
     : [];
 
   const entries = Array.isArray(history) ? [...history].reverse() : [];
@@ -304,9 +307,7 @@ async function renderHistoryChart() {
 
 async function renderRoomsChart() {
   const canvas = document.getElementById("roomsChart");
-  if (!canvas) {
-    throw new Error("rooms chart canvas not found");
-  }
+  if (!canvas) return;
 
   const derivedAnalytics = rooms.map((room) => {
     const roomValves = valves.filter((valve) => valve.room_id === room.id);
@@ -354,9 +355,7 @@ async function renderRoomsChart() {
 
 async function renderHeatingChart() {
   const canvas = document.getElementById("heatingChart");
-  if (!canvas) {
-    throw new Error("heating chart canvas not found");
-  }
+  if (!canvas) return;
 
   const heatingOn = valves.filter((valve) => valve.heating).length;
   const heatingOff = Math.max(valves.length - heatingOn, 0);
@@ -381,9 +380,7 @@ async function renderHeatingChart() {
 
 async function renderSetpointGauge() {
   const canvas = document.getElementById("setpointGauge");
-  if (!canvas) {
-    throw new Error("setpoint gauge canvas not found");
-  }
+  if (!canvas) return;
 
   const valve = valves.find((item) => item.id === selectedHistoryValveId);
   const temperature = valve?.temperature ?? 0;
@@ -411,18 +408,13 @@ async function renderSetpointGauge() {
       id: "gaugeLabel",
       afterDraw(chart) {
         const { ctx } = chart;
-        const meta = chart.getDatasetMeta(0);
-        if (!meta?.data?.length) {
-          return;
-        }
-
         ctx.save();
-        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--dash-text");
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--dash-text").trim() || "#172033";
         ctx.font = "700 22px sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(`${temperature.toFixed(1)}°C`, chart.width / 2, chart.height / 1.28);
         ctx.font = "500 13px sans-serif";
-        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--dash-muted");
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--dash-muted").trim() || "#64708a";
         ctx.fillText(`Target ${setpoint.toFixed(1)}°C`, chart.width / 2, chart.height / 1.12);
         ctx.restore();
       }
@@ -439,61 +431,31 @@ function buildChartOptions(type) {
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: {
-      duration: 600
-    },
+    animation: { duration: 600 },
     plugins: {
-      legend: {
-        labels: {
-          color: textColor
-        }
-      },
-      tooltip: {
-        mode: type === "line" ? "index" : "nearest",
-        intersect: false
-      }
+      legend: { labels: { color: textColor } },
+      tooltip: { mode: type === "line" ? "index" : "nearest", intersect: false }
     },
     scales: type === "doughnut" ? undefined : {
-      x: {
-        ticks: {
-          color: mutedColor
-        },
-        grid: {
-          color: gridColor
-        }
-      },
-      y: {
-        ticks: {
-          color: mutedColor
-        },
-        grid: {
-          color: gridColor
-        }
-      }
+      x: { ticks: { color: mutedColor }, grid: { color: gridColor } },
+      y: { ticks: { color: mutedColor }, grid: { color: gridColor } }
     }
   };
 }
 
 function renderTable() {
   const tbody = document.getElementById("valvesBody");
-  if (!tbody) {
-    throw new Error("dashboard table body not found");
-  }
+  if (!tbody) return;
   tbody.innerHTML = "";
 
   let filtered = valves;
-
   if (currentFilter.trim() !== "") {
     filtered = valves.filter((valve) => valve.id.toLowerCase().includes(currentFilter));
   }
 
   if (filtered.length === 0) {
     const row = document.createElement("tr");
-    row.innerHTML = `
-      <td colspan="7" class="text-center text-muted py-4">
-        Nessuna valvola disponibile.
-      </td>
-    `;
+    row.innerHTML = `<td colspan="7" class="text-center text-muted py-4">Nessuna valvola disponibile.</td>`;
     tbody.appendChild(row);
     return;
   }
@@ -517,7 +479,6 @@ function renderTable() {
         <button class="btn btn-sm btn-success" onclick="assignValveRoom('${valve.id}')">Assegna</button>
       </td>
     `;
-
     tbody.appendChild(row);
   });
 }
@@ -525,31 +486,14 @@ function renderTable() {
 function buildRoomControls(valve) {
   const selectedRoomId = pendingRoomSelections[valve.id] ?? valve.room_id ?? "";
   const options = ['<option value="">Nessuna</option>']
-    .concat(
-      rooms.map((room) => {
-        const selected = room.id === selectedRoomId ? "selected" : "";
-        return `<option value="${room.id}" ${selected}>${room.name}</option>`;
-      })
-    )
+    .concat(rooms.map((room) => `<option value="${room.id}" ${room.id === selectedRoomId ? "selected" : ""}>${room.name}</option>`))
     .join("");
 
-  return `
-    <select
-      class="form-select form-select-sm"
-      id="room-select-${valve.id}"
-      data-role="room-select"
-      onchange="setPendingRoomSelection('${valve.id}', this.value)"
-    >
-      ${options}
-    </select>
-  `;
+  return `<select class="form-select form-select-sm" id="room-select-${valve.id}" data-role="room-select" onchange="setPendingRoomSelection('${valve.id}', this.value)">${options}</select>`;
 }
 
 function formatLastSeen(value) {
-  if (!value) {
-    return "-";
-  }
-
+  if (!value) return "-";
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("it-IT");
 }
@@ -558,12 +502,16 @@ function numberOrFallback(value, fallback) {
   return typeof value === "number" && !Number.isNaN(value) ? value : fallback;
 }
 
+/**
+ * 🏢 CALL REST API (Express Salva Relazione): Configura il link logico della valvola nel DB amministrativo
+ */
 async function assignValveRoom(valveId) {
   const select = document.getElementById(`room-select-${valveId}`);
+  if (!select) return;
   const roomId = select.value;
 
   try {
-    const result = await fetchJson(`/valves/${valveId}/room`, {
+    const result = await fetchJson(`${API_BASE}/valves/${valveId}/room`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roomId })
@@ -590,30 +538,19 @@ async function assignValveRoom(valveId) {
 
 async function fetchJson(url, options) {
   const res = await fetch(url, options);
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} on ${url}`);
-  }
-
+  if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
   return res.json();
 }
 
 function renderDashboardStatus(messages, type = "warning") {
   const container = document.getElementById("dashboardMessage");
-  if (!container) {
-    throw new Error("dashboard message container not found");
-  }
+  if (!container) return;
 
   if (!messages || messages.length === 0) {
     container.innerHTML = "";
     return;
   }
-
-  container.innerHTML = `
-    <div class="alert alert-${type} py-2 mb-0" role="alert">
-      ${messages.join(" | ")}
-    </div>
-  `;
+  container.innerHTML = `<div class="alert alert-${type} py-2 mb-0" role="alert">${messages.join(" | ")}</div>`;
 }
 
 function focusValve(valveId) {
@@ -627,16 +564,13 @@ function setPendingRoomSelection(valveId, roomId) {
 }
 
 function bindDashboardThemeRefresh() {
-  if (window.__dashboardThemeRefreshBound) {
-    return;
-  }
-
+  if (window.__dashboardThemeRefreshBound) return;
   document.addEventListener("themechange", () => {
-    if (window.location.hash.replace("#", "") === "dashboard" || window.location.hash === "") {
+    const currentHash = window.location.hash.replace("#", "");
+    if (currentHash === "dashboard" || currentHash === "") {
       renderCharts();
     }
   });
-
   window.__dashboardThemeRefreshBound = true;
 }
 
@@ -644,7 +578,6 @@ function goToDetails(name) {
   window.location.hash = "details";
   window.selectedValve = name;
 }
-
 function goToSettings(name) {
   window.location.hash = "settings";
   window.selectedValve = name;

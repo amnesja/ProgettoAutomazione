@@ -1,5 +1,7 @@
 import mqtt from "mqtt";
 import dotenv from "dotenv";
+import db from "../db/database.js";
+import { logEvent } from "../utils/logger.js";
 import {
   upsertValve,
   insertTemperature,
@@ -7,74 +9,43 @@ import {
   getRoomById,
   assignValveToRoom as persistValveRoomAssignment,
 } from "../db/repository.js";
-import db from "../db/database.js";
-import { logEvent } from "../utils/logger.js";
 
 dotenv.config();
 
-
+// --- 1. CONFIGURAZIONI E STATO IN RAM ---
 const brokerUrl = process.env.MQTT_BROKER || "mqtt://localhost:1883";
+const WOT_HTTP_URL = `http://localhost:${process.env.WOT_PORT || 8081}`;
 const client = mqtt.connect(brokerUrl);
-const VALID_VALVE_ID = /^valve\d+$/i;
 
-// stato valvole
-const valves: Record<string, { temperature: number; heating: boolean; setpoint: number; lastSeen: number; status: 'ONLINE' | 'OFFLINE'; roomId?: string }> = {};
-
-// override manuale
-interface Override {
-  state: boolean;      // true = ON, false = OFF
-  endTime: number;     // timestamp di scadenza
-  timeoutId: NodeJS.Timeout;
-}
-const overrides: Record<string, Override> = {};
-
-// setpoint di default + ISTERESI
 const DEFAULT_SETPOINT = 20;
 const HYSTERESIS = 1;
-const OFFLINE_TIMEOUT = 30000; // 30 secondi senza dati = OFFLINE
+const OFFLINE_TIMEOUT = 30000; 
 
-/*
- Funzione che resetta lo stato di tutte le valvole a OFFLINE nel database all'avvio.
- Questo evita di mostrare come "ONLINE" valvole che erano attive,
- prima dell'ultimo spegnimento del controller.
- */
-function resetAllValvesStatus() {
+// Specchio locale dello stato delle Thing WoT
+const valves: Record<string, { temperature: number; heating: boolean; setpoint: number; lastSeen: number; status: 'ONLINE' | 'OFFLINE'; roomId?: string }> = {};
+
+interface Override { state: boolean; endTime: number; timeoutId: NodeJS.Timeout; }
+const overrides: Record<string, Override> = {};
+
+// Reset iniziale dello stato nel DB al boot
+(function resetAllValvesStatus() {
   try {
-    const stmt = db.prepare("UPDATE valves SET status = 'OFFLINE'");
-    const info = stmt.run();
-    console.log(`🧹 Reset iniziale: ${info.changes} valvole impostate su OFFLINE nel database.`);
+    db.prepare("UPDATE valves SET status = 'OFFLINE'").run();
+    console.log("🧹 DB local: Stato valvole resettato a OFFLINE.");
   } catch (err) {
-    console.error("Errore durante il reset iniziale delle valvole:", err);
+    console.error("Errore reset iniziale DB:", err);
   }
-}
+})();
 
-// Esecuzione Imediata: Puliamo il DB appena il file viene caricato
-resetAllValvesStatus();
+// --- 2. GESTIONE BOOT E SCOPERTA THING (WoT Consumer Init) ---
 
-client.on("connect", () => {
-  console.log("✅ Controller connected to MQTT");
+function initializeValvesFromList(activeValves: string[]) {
+  activeValves.forEach((valveId) => {
+    if (valves[valveId]) return;
 
-  // ascolta tutte le valvole
-  client.subscribe("home/valves/+/temperature");
-});
-
-client.on("message", (topic, message) => {
-  const data = JSON.parse(message.toString());
-
-  //  Estrazione e validazione ID Valvola
-  const match = topic.match(/home\/valves\/(.+)\/temperature/);
-  if (!match) return;
-
-  const valveId = match[1]!;
-  if (!valveId || !VALID_VALVE_ID.test(valveId)) return;
-
-  const temperature = parseFloat(data.temperature);
-  
-  // Flag di sincronizzazione: Questa variabile ci dice se dobbiamo forzare l'invio del comando MQTT
-  let isReturningOnline = false; 
-
-  // Gestione Stato Iniziale e Rientro Offline
-  if (!valves[valveId]) {
+    console.log(`📡 [WoT Consumer] Rilevata Thing: ${valveId}. Avvio monitoraggio...`);
+    
+    // Recupero ereditarietà setpoint della stanza dal DB locale
     const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as any;
     const roomId = valveFromDb?.room_id;
     let setpoint = DEFAULT_SETPOINT;
@@ -82,103 +53,168 @@ client.on("message", (topic, message) => {
       const room = getRoomById(roomId) as any;
       if (room) setpoint = room.global_setpoint;
     }
-    // Creazione in RAM
-    valves[valveId] = { temperature, heating: false, setpoint, lastSeen: Date.now(), status: 'ONLINE', roomId };
-    upsertValve(valveId, setpoint, false, temperature, roomId);
+
+    // Inizializza lo specchio in RAM
+    valves[valveId] = { temperature: 20.0, heating: false, setpoint, lastSeen: Date.now(), status: 'ONLINE', roomId };
     
-    isReturningOnline = true; // Nuova valvola: allineiamo subito il simulatore
-  } else {
+    // SOTTOSTRIZIONE CONSUMER: Ascoltiamo SOLO la temperatura e il setpoint.
+    // ❌ RIMOSSO l'ascolto di properties/heating per replicare il vecchio progetto ed evitare conflitti ciclici!
+    client.subscribe(`valve-${valveId}/properties/temperature`);
+    client.subscribe(`valve-${valveId}/properties/setpoint`);
+
+    // Sincronizzazione iniziale del setpoint verso la Thing
+    updateManualSetpointInternal(valveId, setpoint, false);
+  });
+}
+
+client.on("connect", async () => {
+  console.log("🎮 Controller connesso al Broker MQTT");
+
+  // Ascolto dinamico nuove Thing dalla Directory via MQTT
+  client.subscribe("ValveDirectory/properties/valves");
+
+  // Sincronizzazione iniziale al boot dalla Directory via HTTP Fetch
+  try {
+    const response = await fetch(`${WOT_HTTP_URL}/valvedirectory/properties/valves`);
+    if (response.ok) {
+      const activeValves = await response.json() as string[];
+      initializeValvesFromList(activeValves);
+    }
+  } catch (err) {
+    console.warn("⚠️ Directory WoT non raggiungibile via HTTP al boot. In attesa di MQTT...");
+  }
+});
+
+// --- 3. ASCOLTO AGGIORNAMENTI PROPRIETÀ (WoT Consumer Inbound) ---
+
+client.on("message", (topic, message) => {
+  try {
+    const payload = message.toString().trim();
+
+    // Aggiornamento lista valvole dalla Directory
+    if (topic === "ValveDirectory/properties/valves") {
+      initializeValvesFromList(JSON.parse(payload));
+      return;
+    }
+
+    // Parsing delle proprietà delle singole valvole
+    const match = topic.match(/^valve-(valve\d+)\/properties\/(temperature|setpoint)$/);
+    if (!match) return;
+
+    const [, valveId, property] = match;
+    if (!valves[valveId]) return;
+
+    let isReturningOnline = false;
+
+    // Gestione transizione OFFLINE -> ONLINE
     if (valves[valveId].status === 'OFFLINE') {
       valves[valveId].status = 'ONLINE';
       updateValveStatus(valveId, 'ONLINE');
-      console.log(`✅ ${valveId}: BACK ONLINE - Sincronizzazione in corso...`);
-      
-      isReturningOnline = true; // Era offline: forziamo il comando per riallineare il simulatore fisico
+      isReturningOnline = true; 
     }
-  }
-
-  // Aggiornamento dati correnti
-  valves[valveId].temperature = temperature;
-  valves[valveId].lastSeen = Date.now();
-  insertTemperature(valveId, temperature);
-
-  console.log(`🌡️ [${valveId}] Temp: ${temperature}°C - Setpoint: ${valves[valveId].setpoint}°C`);
-
-  // Gestione LOGICA (Override o Automatica)
-  const now = Date.now();
-  
-  if (overrides[valveId] && overrides[valveId].endTime > now) {
-    // --- LOGICA OVERRIDE ---
-    const overrideState = overrides[valveId].state;
-    const currentState = valves[valveId].heating;
     
-    // Inviamo il comando se lo stato cambia O se la valvola è appena tornata online
+    valves[valveId].lastSeen = Date.now();
+
+    // Aggiornamento dello specchio in RAM
+    if (property === "temperature") {
+      valves[valveId].temperature = parseFloat(payload);
+      insertTemperature(valveId, valves[valveId].temperature); // Storico su DB
+    } else if (property === "setpoint") {
+      valves[valveId].setpoint = parseFloat(payload);
+    }
+
+    console.log(`🔄 [RAM Update] ${valveId} -> Temp: ${valves[valveId].temperature}°C | Heating: ${valves[valveId].heating} | Setpoint: ${valves[valveId].setpoint}°C`);
+
+    // Elabora la logica ad ogni variazione ricevuta (Esattamente come nel vecchio progetto)
+    executeControlLogic(valveId, isReturningOnline);
+
+  } catch (err) {
+    console.error("❌ Errore processing messaggio MQTT:", err);
+  }
+});
+
+// --- 4. CORE LOGICO E INVOCAZIONE AZIONI (WoT Consumer Outbound) ---
+
+function executeControlLogic(valveId: string, isReturningOnline: boolean) {
+  const valve = valves[valveId];
+  const now = Date.now();
+
+  // Caso A: Gestione manuale tramite Override attivo (Copiato fedelmente dal vecchio progetto)
+  if (overrides[valveId] && overrides[valveId].endTime > now) {
+    const overrideState = overrides[valveId].state;
+    const currentState = valve.heating;
+
     if (overrideState !== currentState || isReturningOnline) {
-      valves[valveId].heating = overrideState;
-      upsertValve(valveId, valves[valveId].setpoint, overrideState, temperature);
-      client.publish(`home/valves/${valveId}/command`, JSON.stringify({ heating: overrideState }));
+      valve.heating = overrideState;
+      upsertValve(valveId, valve.setpoint, overrideState, valve.temperature);
+      invokeWotAction(valveId, "setHeating", overrideState);
       console.log(`⚠️ [${valveId}] OVERRIDE FORZATO: heating = ${overrideState}`);
     }
-  } else {
-    // --- LOGICA AUTOMATICA (ISTERESI) ---
+  } 
+  // Caso B: Logica automatica tramite Isteresi
+  else {
     if (overrides[valveId]) {
       clearTimeout(overrides[valveId].timeoutId);
       delete overrides[valveId];
       console.log(`🔄 [${valveId}] Override scaduto, ripresa logica automatica`);
     }
 
-    const setpoint = valves[valveId].setpoint;
-    let currentState = valves[valveId].heating;
+    const setpoint = valve.setpoint;
+    const currentState = valve.heating;
     let newState = currentState;
 
-    // Calcolo Isteresi
-    if (temperature < setpoint - HYSTERESIS) {
+    if (valve.temperature < setpoint - HYSTERESIS) {
       newState = true;
-    } else if (temperature > setpoint + HYSTERESIS) {
+    } else if (valve.temperature > setpoint + HYSTERESIS) {
       newState = false;
     }
 
-    // --- DECISIONE DI INVIO COMANDO ---
-    // Aggiungendo "|| isReturningOnline", risolviamo il bug del simulatore che non partiva
     if (newState !== currentState || isReturningOnline) {
-      valves[valveId].heating = newState;
-      upsertValve(valveId, setpoint, newState, temperature);
-      
-      const payload = JSON.stringify({ heating: newState });
-      client.publish(`home/valves/${valveId}/command`, payload);
-
-      console.log(`🔥 [${valveId}] COMANDO INVIATO: heating = ${newState} (Motivo: ${isReturningOnline ? 'Sincro Online' : 'Cambio Temp'})`);
-    } else {
-      console.log(`⏸️ [${valveId}] Stato invariato (${temperature}°C)`);
+      valve.heating = newState;
+      upsertValve(valveId, setpoint, newState, valve.temperature);
+      invokeWotAction(valveId, "setHeating", newState);
+      console.log(`🔥 [${valveId}] COMANDO INVIATO: heating = ${newState}`);
     }
   }
-});
+}
 
-// Funzioni esportate per gestire gli override
+// Funzione centralizzata per invocare le Action del WoT via HTTP POST Fetch
+async function invokeWotAction(valveId: string, actionName: string, payload: any) {
+  try {
+    await fetch(`${WOT_HTTP_URL}/valve-${valveId}/actions/${actionName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    console.log(`🚀 [WoT Action] Invocata con successo l'azione '${actionName}' per ${valveId} con valore: ${payload}`);
+  } catch (err: any) {
+    console.error(`❌ [WoT Action Error] Fallita invocazione '${actionName}' per ${valveId}:`, err.message);
+  }
+}
+
+// --- 5. INTERFACCE E METODI ESPORTATI ---
+
 export function setOverride(valveId: string, state: boolean, durationSeconds: number): boolean {
-  if (!valves[valveId]) {
-    return false; // valvola non trovata
-  }
+  if (!valves[valveId]) return false;
 
-  // rimuovi override precedente se esiste
-  if (overrides[valveId]) {
-    clearTimeout(overrides[valveId].timeoutId);
-  }
+  if (overrides[valveId]) clearTimeout(overrides[valveId].timeoutId);
 
   const endTime = Date.now() + durationSeconds * 1000;
-
-  // crea il timeout che rimuove l'override
   const timeoutId = setTimeout(() => {
     delete overrides[valveId];
-    console.log(`⏰ Override per ${valveId} scaduto`);
+    console.log(`⏰ Override scaduto per ${valveId}`);
+    // Quando scade, forziamo il rinfresco immediato per far ripartire l'isteresi automatica
+    executeControlLogic(valveId, false);
   }, durationSeconds * 1000);
 
   overrides[valveId] = { state, endTime, timeoutId };
 
-  // pubblica subito il comando
-  const payload = JSON.stringify({ heating: state });
-  client.publish(`home/valves/${valveId}/command`, payload);
+  // Allineiamo subito la RAM locale e salviamo sul DB
+  valves[valveId].heating = state;
+  upsertValve(valveId, valves[valveId].setpoint, state, valves[valveId].temperature);
 
+  // Pubblica subito l'azione HTTP single-shot
+  invokeWotAction(valveId, "setHeating", state);
   console.log(`✅ Override attivato: ${valveId} = ${state} per ${durationSeconds}s`);
   return true;
 }
@@ -186,99 +222,72 @@ export function setOverride(valveId: string, state: boolean, durationSeconds: nu
 export function getActiveOverrides() {
   const now = Date.now();
   const active: Record<string, { state: boolean; remainingSeconds: number }> = {};
-
   for (const [valveId, override] of Object.entries(overrides)) {
     if (override.endTime > now) {
-      active[valveId] = {
-        state: override.state,
-        remainingSeconds: Math.ceil((override.endTime - now) / 1000)
-      };
+      active[valveId] = { state: override.state, remainingSeconds: Math.ceil((override.endTime - now) / 1000) };
     }
   }
-
   return active;
 }
 
 export function cancelOverride(valveId: string): boolean {
-  if (overrides[valveId]) {
-    clearTimeout(overrides[valveId].timeoutId);
-    delete overrides[valveId];
-    console.log(`❌ Override cancellato per ${valveId}`);
-    return true;
-  }
-  return false;
+  if (!overrides[valveId]) return false;
+  clearTimeout(overrides[valveId].timeoutId);
+  delete overrides[valveId];
+  // Forza il riallineamento immediato all'automatismo dopo la cancellazione
+  executeControlLogic(valveId, false);
+  return true;
 }
 
 export function assignValveRoom(valveId: string, roomId?: string | null) {
-  if (!VALID_VALVE_ID.test(valveId)) {
-    return null;
-  }
+  const VALID_VALVE_ID = /^valve\d+$/i;
+  if (!VALID_VALVE_ID.test(valveId)) return null;
 
   const assignment = persistValveRoomAssignment(valveId, roomId || "");
-  if (!assignment) {
-    return null;
-  }
+  if (!assignment) return null;
 
-  // log lato runtime (solo se effetto/room è presente in memoria)
-  if (assignment.roomId) {
-    logEvent("VALVE_ASSIGNED", { valveId, roomId: assignment.roomId, setpoint: assignment.setpoint });
-  } else {
-    logEvent("VALVE_DETACHED", { valveId, roomId: null, setpoint: assignment.setpoint });
-  }
+  logEvent(assignment.roomId ? "VALVE_ASSIGNED" : "VALVE_DETACHED", { valveId, roomId: assignment.roomId || null, setpoint: assignment.setpoint });
 
   const valve = valves[valveId];
   if (valve) {
     valve.roomId = assignment.roomId || undefined;
     valve.setpoint = assignment.setpoint;
-    upsertValve(
-      valveId,
-      assignment.setpoint,
-      valve.heating,
-      valve.temperature,
-      assignment.roomId || undefined
-    );
+    upsertValve(valveId, assignment.setpoint, valve.heating, valve.temperature, assignment.roomId || undefined);
+    updateManualSetpointInternal(valveId, assignment.setpoint, true);
   }
-
   return assignment;
 }
 
+export function removeValve(valveId: string) {
+  cancelOverride(valveId);
+  if (valves[valveId]) {
+    delete valves[valveId];
+    client.unsubscribe(`valve-${valveId}/properties/temperature`);
+    client.unsubscribe(`valve-${valveId}/properties/setpoint`);
+  }
+  logEvent("VALVE_REMOVED_FROM_CONTROLLER", { valveId });
+}
 
-// Controlla periodicamente se ci sono valvole offline
+function updateManualSetpointInternal(valveId: string, newSetpoint: number, shouldLog: boolean) {
+  if (valves[valveId]) {
+    valves[valveId].setpoint = newSetpoint;
+    invokeWotAction(valveId, "setTargetTemperature", newSetpoint);
+    if (shouldLog) logEvent("SETPOINT_CHANGED", { valveId, setpoint: newSetpoint, manual: true });
+  }
+}
+
+export function updateManualSetpoint(valveId: string, newSetpoint: number) {
+  updateManualSetpointInternal(valveId, newSetpoint, true);
+}
+
+// Controllo ciclico liveness valvole (Heartbeat)
 setInterval(() => {
   const now = Date.now();
-
   for (const [valveId, valve] of Object.entries(valves)) {
     if (valve.status === 'ONLINE' && now - valve.lastSeen > OFFLINE_TIMEOUT) {
       valve.status = 'OFFLINE';
       updateValveStatus(valveId, 'OFFLINE');
-      console.log(`⚫ ${valveId}: OFFLINE (nessun dato per ${Math.floor((now - valve.lastSeen) / 1000)}s)`);
+      console.log(`⚫ ${valveId}: Rilevata OFFLINE per inattività.`);
     }
   }
-}, 10000); // verifica ogni 10 secondi
-
-// funzione di rimozione della valvola 
-export function removeValve(valveId: string) {
-  // rimuovi override se presente
-  if (overrides[valveId]) {
-    clearTimeout(overrides[valveId].timeoutId);
-    delete overrides[valveId];
-  }
-
-  // rimuovi la valvola dalla memoria del controller
-  if (valves[valveId]) {
-    delete valves[valveId];
-  }
-
-  console.log(`🗑️ Valvola ${valveId} rimossa dal controller`);
-  logEvent("VALVE_REMOVED_FROM_CONTROLLER", { valveId });
-}
-
-
-export function updateManualSetpoint(valveId: string, newSetpoint: number) {
-  if (valves[valveId]) {
-    valves[valveId].setpoint = newSetpoint;
-    console.log(`🎯 Controller: Setpoint aggiornato in memoria per ${valveId} a ${newSetpoint}°C`);
-    logEvent("SETPOINT_CHANGED", { valveId, setpoint: newSetpoint, manual: true });
-  }
-}
-
+}, 10000);

@@ -1,17 +1,17 @@
 const THEME_STORAGE_KEY = "spa-theme-preference";
 const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
+// 🌟 CONFIGURAZIONE CENTRALIZZATA DEI TARGET (Visibili a tutta l'applicazione)
+window.REST_API_URL = "http://localhost:3001";
+window.WOT_SERVER_URL = "http://localhost:8081";
+
 function getThemePreference() {
   return localStorage.getItem(THEME_STORAGE_KEY) || "system";
 }
 
 function resolveTheme(preference = getThemePreference()) {
-  if (preference === "dark") {
-    return "dark";
-  }
-  if (preference === "light") {
-    return "light";
-  }
+  if (preference === "dark") return "dark";
+  if (preference === "light") return "light";
   return systemThemeQuery.matches ? "dark" : "light";
 }
 
@@ -48,9 +48,7 @@ function toggleThemePreference() {
 }
 
 function bindThemeToggle(root = document) {
-  if (!root) {
-    return;
-  }
+  if (!root) return;
   root.querySelectorAll("[data-theme-toggle]").forEach((button) => {
     button.onclick = toggleThemePreference;
   });
@@ -70,8 +68,27 @@ function initThemeSystem() {
   }
 }
 
+// 🌟 FUNZIONE PULIZIA TIMER SPA
+function clearAllGlobalTimers() {
+  if (window.dashboardRefreshTimer) {
+    clearInterval(window.dashboardRefreshTimer);
+    window.dashboardRefreshTimer = null;
+  }
+  if (window.settingsRefreshTimer) {
+    clearInterval(window.settingsRefreshTimer);
+    window.settingsRefreshTimer = null;
+  }
+  if (window.liveStatusTimer) {
+    clearInterval(window.liveStatusTimer);
+    window.liveStatusTimer = null;
+  }
+}
+
 async function loadPage(page) {
   try {
+    // Prima di caricare una nuova pagina, resettiamo in modo pulito tutti i timer attivi
+    clearAllGlobalTimers();
+
     const res = await fetch(`/pages/${page}.html`);
     const html = await res.text();
     document.getElementById("app").innerHTML = html;
@@ -82,25 +99,23 @@ async function loadPage(page) {
 
     switch (page) {
       case "dashboard":
-        if (typeof initDashboard !== "function") {
-          throw new Error("initDashboard is not available");
+        if (typeof initDashboard === "function") {
+          await initDashboard();
+        } else {
+          console.error("initDashboard non disponibile");
         }
-        await initDashboard();
         break;
       case "details":
-        await initDetails();
+        if (typeof initDetails === "function") await initDetails();
         break;
       case "settings":
-        await initSettings();
+        if (typeof initSettings === "function") await initSettings();
         break;
       case "rooms":
-        await initRooms();
+        if (typeof initRooms === "function") await initRooms();
         break;
       case "wot":
-        if (typeof initWot !== "function") {
-          throw new Error("initWot is not available");
-        }
-        await initWot();
+        if (typeof initWot === "function") await initWot();
         break;
     }
   } catch (err) {
@@ -122,7 +137,6 @@ function updatePageTitle(page) {
     rooms: "Stan Rooms",
     wot: "WoT Explorer"
   };
-
   document.getElementById("pageTitle").textContent = titles[page] || "App";
 }
 
@@ -135,11 +149,9 @@ initThemeSystem();
 window.addEventListener("hashchange", router);
 window.addEventListener("load", router);
 
-
-// Fix: i link della sidebar devono triggerare il router
 document.addEventListener("click", function (e) {
   if (e.target.matches(".nav-link")) {
     const hash = e.target.getAttribute("href");
-    window.location.hash = hash;   // forza il cambio pagina
+    window.location.hash = hash;
   }
 });
