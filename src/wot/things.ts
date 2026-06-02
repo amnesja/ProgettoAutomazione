@@ -3,8 +3,8 @@ import { HttpServer } from '@node-wot/binding-http';
 import { MqttBrokerServer } from '@node-wot/binding-mqtt';
 import dotenv from 'dotenv';
 import { updateSetpoint, getValveById } from "../db/repository.js";
-import { valveThingModel } from "./valveTemplate.tm.js";
-import { directoryThingModel } from "./directoryTemplate.tm.js";
+import { valveThingDescription } from "./descriptions/valveThingDescription.js";
+import { directoryThingDescription } from "./descriptions/directoryThingDescription.js";
 
 dotenv.config();
 
@@ -28,8 +28,6 @@ const DEFAULT_SETPOINT = 20;
 
 // CREAZIONE COSA GENERICA (VALVOLA)
 async function createThing(valveId: string, initialSetpoint: number) {
-  const thingTitle = `valve-${valveId}`;
-
   // Inizializziamo lo stato in memoria con il setpoint estratto dal DB
   valveStates[valveId] = {
     temperature: 20.0, 
@@ -37,10 +35,10 @@ async function createThing(valveId: string, initialSetpoint: number) {
     setpoint: initialSetpoint
   };
 
-  //Recuperiamo la Thing Description pulita e annotata semanticamente dal file esterno
-  const tdConfig = valveThingModel(valveId);
+  // Recuperiamo la Thing Description concreta, derivata dal modello WoT astratto.
+  const tdConfig = valveThingDescription(valveId);
 
-  //Produciamo la Thing passando la TD generata dal template esterno
+  // Produciamo la Thing passando la TD generata dalla factory esterna.
   const thing = await wot.produce(tdConfig);
 
   // Handler Lettura Proprietà (Interfaccia WoT standard)
@@ -130,8 +128,8 @@ export function removeThing(valveId: string) {
 // CREAZIONE VALVE DIRECTORY
 async function createDirectoryThing() {
 
-  // Produciamo la Directory usando direttamente l'oggetto importato dal file esterno
-  const directory = await wot.produce(directoryThingModel);
+  // Produciamo la Directory usando la Thing Description concreta.
+  const directory = await wot.produce(directoryThingDescription);
 
   directory.setPropertyReadHandler("valves", () => Promise.resolve(Object.keys(things)));
 

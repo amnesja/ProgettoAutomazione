@@ -1,396 +1,259 @@
-# 🌡️ Progetto Automazione — Smart Thermostat
+# Progetto Automazione - Smart Thermostat WoT
 
-Documentazione tecnica del progetto **ProgettoAutomazione**.
+Sistema di termoregolazione simulato basato su **Node.js**, **TypeScript**, **Web of Things**, **MQTT come trasporto WoT**, **Express** e **SQLite**.
 
-Questo repository implementa un sistema di termoregolazione simulato composto da:
+Il progetto modella una rete di valvole termostatiche: ogni valvola simulata si registra in una directory WoT, invia telemetria periodica, riceve comandi di riscaldamento e mantiene sincronizzati stato live, database e interfaccia web.
 
-- **Simulatore valvole** (Node.js/MQTT) che pubblica temperature e riceve comandi
-- **Controller MQTT** che:
-  - applica **isteresi** per decidere ON/OFF riscaldamento
-  - gestisce **override manuali temporanei**
-  - marca una valvola come **OFFLINE** se non riceve dati
-  - aggiorna lo stato su **SQLite** e invia comandi verso le valvole
-- **API HTTP (Express)** per consultare/modificare dati su SQLite e servire la web UI
-- **Web of Things (WoT)** (node-wot) per esporre lo stato live come Thing osservabili
-- **Frontend** SPA (Bootstrap + Chart.js) che usa sia REST sia WoT per lo stato live
+## Indice
 
----
-
-## Indice (navigazione rapida)
-
-- [Panoramica: cosa fa il sistema](#panoramica-cosa-fa-il-sistema)
-- [Componenti principali](#componenti-principali)
-- [Flusso end-to-end (simulatore ↔ MQTT ↔ controller ↔ DB ↔ API ↔ frontend)](#flusso-end-to-end-simulatore--mqtt--controller--db--api--frontend)
-- [Flusso WoT (aggiornamento live)](#flusso-wot-aggiornamento-live)
-- [Tecnologie utilizzate](#tecnologie-utilizzate)
-- [Requisiti e porte](#requisiti-e-porte)
+- [Panoramica](#panoramica)
+- [Architettura](#architettura)
+- [Requisiti](#requisiti)
 - [Installazione](#installazione)
-- [Comandi disponibili](#comandi-disponibili)
-- [Configurazione (.env)](#configurazione-env)
-- [Architettura per file (responsabilità e dettagli)](#architettura-per-file-responsabilita-e-dettagli)
-  - [src/api/server.ts](#srcapiserversart)
-  - [src/controller/controller.ts](#srcc-controllercontroller-ts)
-  - [src/simulator/valveSimulator.ts](#srcs-simulatorvalvesimulator-ts)
-  - [src/db/database.ts](#srcdbdatabasets)
-  - [src/db/repository.ts](#srcdbrepositoryts)
-  - [src/mqtt/mqttClient.ts](#srcmqttmqttclientts)
-  - [src/utils/logger.ts](#srcutilsloggerts)
-  - [src/wot/things.ts](#srcwotthingsts)
-  - [Frontend: public/index.html](#frontend-publicindexhtml)
-  - [Frontend: public/js/app.js](#frontend-publicjsappjs)
-  - [Frontend: public/js/dashboard.js](#frontend-publicjsdashboardjs)
-  - [Frontend: public/js/rooms.js](#frontend-publicjsroomsjs)
-  - [Frontend: public/js/settings.js](#frontend-publicjssettingsjs)
-  - [Frontend: pagine pubblicate](#frontend-pagine-pubblicate)
-  - [Frontend: CSS public/css/style.css](#frontend-css-publiccssstylecss)
-- [Topic MQTT e payload JSON](#topic-mqtt-e-payload-json)
-- [API HTTP: endpoint reali e payload attesi](#api-http-endpoint-reali-e-payload-attesi)
-- [WoT: Thing model e come viene popolato](#wot-thing-model-e-come-viene-popolato)
-- [Schema SQLite (tabelle e colonne)](#schema-sqlite-tabelle-e-colonne)
-- [Log e tracciamento eventi](#log-e-tracciamento-eventi)
-- [Gap / Note (incoerenze o parti richiamate ma non presenti)](#gap--note-incoerenze-o-parti-richiamate-ma-non-presenti)
-- [Esempi di test rapidi (curl)](#esempi-di-test-rapidi-curl)
-- [Prossimi miglioramenti possibili](#prossimi-miglioramenti-possibili)
+- [Configurazione](#configurazione)
+- [Avvio locale](#avvio-locale)
+- [Script npm](#script-npm)
+- [Flusso dei dati](#flusso-dei-dati)
+- [Topic MQTT](#topic-mqtt)
+- [API REST](#api-rest)
+- [Web of Things](#web-of-things)
+- [Frontend](#frontend)
+- [Database](#database)
+- [Ontologia](#ontologia)
+- [Struttura del progetto](#struttura-del-progetto)
+- [Esempi rapidi](#esempi-rapidi)
+- [Note tecniche](#note-tecniche)
 
+## Panoramica
 
----
+Il sistema è composto da quattro processi principali:
 
-## Panoramica: cosa fa il sistema
+- **WoT Server** (`src/wot/things.ts`): espone una `ValveDirectory` e crea dinamicamente una Thing per ogni valvola registrata.
+- **Simulatore valvola** (`src/simulator/valveSimulator.ts`): simula una valvola fisica, invoca action WoT via MQTT ogni 5 secondi e reagisce alle property change WoT ricevute via MQTT.
+- **Controller** (`src/controller/controller.ts`): monitora le proprietà WoT via MQTT, applica la logica di isteresi, gestisce override manuali, aggiorna SQLite e invoca azioni WoT via HTTP.
+- **API + Web UI** (`src/api/server.ts`): espone endpoint REST e serve la SPA statica in `public/`.
 
-Il sistema simula una rete di valvole termostatiche e mette insieme **controllo logico**, **persistenza**, **comunicazione MQTT**, **API HTTP** e **esposizione WoT**.
+La logica di controllo usa:
 
-In particolare:
+- setpoint predefinito a `20°C`
+- isteresi di `1°C`
+- timeout offline di `30s`
+- ID valvola validi nel formato `valveN`, ad esempio `valve1`, `valve2`
 
-- ogni **valvola simulata** pubblica periodicamente la sua **temperatura** su MQTT
-- il **controller** ascolta le temperature e decide se inviare comando `heating: true/false`
-  usando una logica a **isteresi** (evita continue commutazioni)
-- il controller supporta anche un **override manuale** temporaneo (ON/OFF forzato)
-- ogni lettura viene memorizzata su **SQLite** e lo stato valvola è consultabile via **REST**
-- la **web UI** combina:
-  - stato persistito (DB/REST)
-  - stato live (WoT properties `temperature` e `heating`)
+## Architettura
 
----
+```text
+Simulatore valvola
+  -> invoca action WoT via MQTT: ValveDirectory/register
+  -> invoca action WoT via MQTT: valve-{id}/updateStatus
 
-## Componenti principali
+WoT Server
+  -> espone ValveDirectory
+  -> espone valve-valve1, valve-valve2, ...
+  -> pubblica property change via MQTT tramite node-wot
+  -> espone properties/actions via HTTP
 
-1. **Simulatore valvole** (`src/simulator/valveSimulator.ts`)
-   - pubblica su MQTT: `home/valves/{id}/temperature`
-   - riceve comandi MQTT da: `home/valves/{id}/command`
-2. **Controller MQTT** (`src/controller/controller.ts`)
-   - sottoscrive: `home/valves/+/temperature`
-   - calcola ON/OFF con isteresi e override
-   - aggiorna DB (valvole + storico)
-   - pubblica comandi verso i topic valvola
-3. **API HTTP + static files** (`src/api/server.ts`)
-   - espone endpoint REST per DB
-   - serve la SPA e le sue pagine da `public/`
-4. **Database SQLite** (`src/db/database.ts`, `src/db/repository.ts`)
-   - schema tabelle + query per CRUD/analitiche
-5. **WoT** (`src/wot/things.ts`)
-   - crea Thing per ogni valvola e una directory Thing
-   - aggiorna proprietà osservabili leggendo i messaggi MQTT
+Controller
+  -> ascolta property change WoT via MQTT
+  -> applica isteresi / override / offline timeout
+  -> aggiorna SQLite
+  -> invoca actions WoT via HTTP
 
----
+Express API + Frontend
+  -> legge e modifica dati amministrativi via SQLite
+  -> serve dashboard, stanze e impostazioni
+  -> la UI legge stato live direttamente dal WoT
+```
 
-## Flusso end-to-end (simulatore ↔ MQTT ↔ controller ↔ DB ↔ API ↔ frontend)
+## Requisiti
 
-1. Avvio simulatore:
-   - il simulatore parte e inizia a pubblicare `{ temperature, heating }`
-   - ritmo di pubblicazione: **ogni 5s** (via `setInterval`)
-2. Controller MQTT:
-   - riceve messaggi su `home/valves/+/temperature`
-   - salva temperature su tabella `temperature_readings`
-   - aggiorna `valves` con `temperature`, `heating`, `setpoint`, `status`
-   - applica:
-     - **isteresi** rispetto al `setpoint`
-     - eventuale **override** se attivo
-     - **OFFLINE timeout** se non riceve dati
-   - invia comando su `home/valves/{id}/command`
-3. Database:
-   - letture -> storico (ultime 50 letture per history endpoint)
-   - calcoli -> analytics per stanza
-4. API HTTP:
-   - frontend interroga:
-     - `/rooms`, `/valves`, `/valves/:id/history`
-     - override: `/override` (POST) e `/override/:valveId` (DELETE)
-     - assegnazione valvola: `/valves/:valveId/room` (PUT)
-5. Frontend (SPA):
-   - dashboard ogni **5s** rilegge DB + WoT directory
-   - settings ogni 20s ricarica layout + ogni 3s aggiorna campi numerici
+- Node.js
+- npm
+- broker MQTT attivo, ad esempio Mosquitto su `mqtt://localhost:1883`
 
----
+Porte usate di default:
 
-## Flusso WoT (aggiornamento live)
-
-- `src/wot/things.ts` collega un `HttpServer` su `WOT_PORT` (default **8081**)
-- si connette al broker MQTT e ascolta `home/valves/+/temperature`
-- ogni volta che arriva una temperatura:
-  - aggiorna `valveStates[valveId] = { temperature, heating }`
-  - se la Thing per quella valvola non esiste ancora la crea on-demand
-- le properties WoT `temperature` e `heating` sono `observable: true` e vengono lette dalla UI
----
-
-
-
-## Tecnologie utilizzate
-
-- **Node.js**
-- **TypeScript**
-- **Express 5**
-- **MQTT**
-- **better-sqlite3**
-- **SQLite**
-- **dotenv**
-- **Bootstrap 5**
-- **Chart.js**
-- **node-wot** (`@node-wot/core`, `@node-wot/binding-http`)
-
----
-
-## Requisiti e porte
-
-Prima di eseguire il progetto servono:
-
-- **Node.js** installato
-
-- un **broker MQTT** attivo, ad esempio Mosquitto su `mqtt://localhost:1883`
-- accesso alla porta:
-  - `3001` per l’API / sito web
-  - `8081` per l’esposizione WoT
-
----
+- `3001`: API Express e web app
+- `8081`: server HTTP WoT
+- `1883`: broker MQTT
 
 ## Installazione
-
-Clona il repository e installa le dipendenze:
 
 ```bash
 npm install
 ```
 
----
+## Configurazione
 
-## Comandi disponibili
+Il progetto usa `dotenv`. Puoi creare un file `.env` nella root:
 
-### Avvio API + sito web
-Avvia il server Express che espone API e contenuti statici:
-
-```bash
-npm run dev
+```env
+MQTT_BROKER=mqtt://localhost:1883
+PORT=3001
+WOT_PORT=8081
+SQLITE_DB_PATH=thermostat.db
 ```
 
-Di default l’app ascolta su:
+Valori di default se le variabili non sono definite:
 
-- `http://localhost:3001`
+- `MQTT_BROKER=mqtt://localhost:1883`
+- `PORT=3001`
+- `WOT_PORT=8081`
+- `SQLITE_DB_PATH=thermostat.db`
 
----
+Nota: nel frontend gli URL sono definiti in `public/js/app.js`:
 
-### Avvio controller MQTT
-Avvia la logica di controllo che:
-
-- ascolta le temperature delle valvole
-- applica isteresi
-- gestisce override manuali
-- marca le valvole offline se non ricevono dati
-
-```bash
-npm run controller
+```js
+window.REST_API_URL = "http://localhost:3001";
+window.WOT_SERVER_URL = "http://localhost:8081";
 ```
 
----
+Se cambi porta all'API o al WoT server, aggiorna anche questi valori.
 
-### Avvio simulatore valvole
-Avvia un simulatore di valvola.
+## Avvio locale
 
-Esempio:
+Avvia i componenti in terminali separati.
+
+1. Avvia il broker MQTT.
 
 ```bash
-npm run simulator -- valve1
+mosquitto
 ```
 
-Se non passi un ID, usa `valve1` come default.
-
----
-
-### Avvio Web of Things
-Esporta le valvole come oggetti WoT via HTTP:
+2. Avvia il WoT server.
 
 ```bash
 npm run wot
 ```
 
-L’endpoint WoT parte su:
-
-- `http://localhost:8081`
-
----
-
-### Build del progetto
-Compila il TypeScript in `dist/`:
+3. Avvia il controller.
 
 ```bash
-npm run build
+npm run controller
 ```
 
----
-
-### Avvio produzione
-Avvia l’API compilata da `dist/`:
+4. Avvia una o più valvole simulate.
 
 ```bash
-npm run start
+npm run simulator -- valve1
+npm run simulator -- valve2
 ```
 
-> Nota: prima devi eseguire `npm run build`.
-
----
-
-### Test
-Lo script test al momento è solo un placeholder:
+5. Avvia API e web app.
 
 ```bash
-npm test
+npm run dev
 ```
 
----
+Poi apri:
 
-## Configurazione
-
-Il progetto legge le variabili d’ambiente tramite `dotenv`.
-
-Crea un file `.env` nella root del progetto, ad esempio:
-
-```env
-MQTT_BROKER=mqtt://localhost:1883
-PORT=3001
+```text
+http://localhost:3001
 ```
 
-### Variabili principali
+## Script npm
 
-- `MQTT_BROKER`: URL del broker MQTT
-- `PORT`: porta dell’API Express
+| Script | Descrizione |
+| --- | --- |
+| `npm run dev` | Avvia Express da `src/api/server.ts` e serve la web UI |
+| `npm run wot` | Avvia il Servient WoT HTTP/MQTT |
+| `npm run controller` | Avvia il controller di termoregolazione |
+| `npm run simulator -- valve1` | Avvia una valvola simulata con ID `valve1` |
+| `npm run build` | Compila TypeScript in `dist/` |
+| `npm run start` | Avvia l'API compilata da `dist/api/server.js` |
+| `npm test` | Placeholder, al momento non esegue test reali |
 
-Se non impostate, vengono usati i default:
+## Flusso dei dati
 
-- `MQTT_BROKER = mqtt://localhost:1883`
-- `PORT = 3001`
-
----
-
-## Architettura
-
-### 1. Simulatore valvole
-`src/simulator/valveSimulator.ts`
-
-- invia periodicamente il valore di temperatura
-- ascolta i comandi `home/valves/{id}/command`
-- modifica la temperatura in base allo stato `heating`
-
-### 2. Controller
-`src/controller/controller.ts`
-
-- ascolta `home/valves/+/temperature`
-- applica la logica di controllo con isteresi
-- gestisce override temporanei
-- aggiorna lo stato delle valvole nel database
-- rileva valvole offline
-
-### 3. API HTTP
-`src/api/server.ts`
-
-- espone endpoint REST per valvole, stanze e override
-- serve la UI statica da `public/`
-- permette consultazione e modifica del database
-
-### 4. Database
-`src/db/database.ts` e `src/db/repository.ts`
-
-- persistenza locale su SQLite
-- gestione di valvole, stanze e storico temperature
-- calcolo di statistiche aggregate per stanza
-
-### 5. Web of Things
-`src/wot/things.ts`
-
-- crea Thing dinamici per le valvole
-- legge lo stato aggiornato via MQTT
-- espone proprietà e azioni via HTTP
-
----
+1. Il simulatore pubblica `{ id: "valve1" }` su `ValveDirectory/actions/register`.
+2. Il WoT server crea, se non esiste, la Thing `valve-valve1`.
+3. La directory risponde con il setpoint iniziale, recuperato dal DB o impostato a `20`.
+4. Il simulatore invia ogni 5 secondi la telemetria su `valve-valve1/actions/updateStatus`.
+5. Il WoT server aggiorna le properties `temperature` e `heating` ed emette property change.
+6. Il controller ascolta `valve-valve1/properties/temperature` e `valve-valve1/properties/setpoint`.
+7. Il controller salva lo storico temperature, aggiorna lo stato della valvola e decide il nuovo `heating`.
+8. Se serve, il controller invoca l'action HTTP `setHeating`.
+9. La UI legge dati amministrativi da Express e dati live dal WoT server.
 
 ## Topic MQTT
 
-### Temperature della valvola
+Il progetto **non definisce un protocollo MQTT applicativo personalizzato** con topic di dominio come `home/valves/...`.
+
+MQTT viene usato come trasporto della binding MQTT di **node-wot**: il simulatore e il controller pubblicano o sottoscrivono topic che corrispondono ad `actions` e `properties` delle Thing WoT.
+
+| Topic | Direzione | Payload |
+| --- | --- | --- |
+| `ValveDirectory/actions/register` | simulatore -> WoT | `{ "id": "valve1" }` |
+| `ValveDirectory/actions/register/responses` | WoT -> simulatore | `{ "setpoint": 20 }` |
+| `ValveDirectory/properties/valves` | WoT -> controller | array di ID valvola |
+| `valve-{id}/actions/updateStatus` | simulatore -> WoT | `{ "temperature": 20.2, "heating": false }` |
+| `valve-{id}/properties/temperature` | WoT -> controller | numero |
+| `valve-{id}/properties/heating` | WoT -> simulatore | booleano |
+| `valve-{id}/properties/setpoint` | WoT -> controller/simulatore | numero |
+
+La UI non si sottoscrive ai topic MQTT: legge le property live tramite endpoint HTTP WoT, ad esempio `/valve-valve1/properties/temperature`.
+
+Esempio con `valve1`:
+
 ```text
-home/valves/{id}/temperature
+valve-valve1/actions/updateStatus
+valve-valve1/properties/temperature
+valve-valve1/properties/heating
+valve-valve1/properties/setpoint
 ```
 
-Messaggio pubblicato dal simulatore, ad esempio:
+## API REST
 
-```json
-{
-  "temperature": "20.50",
-  "heating": false
-}
-```
+Base URL:
 
----
-
-### Comando alla valvola
 ```text
-home/valves/{id}/command
+http://localhost:3001
 ```
-
-Messaggio pubblicato dal controller:
-
-```json
-{
-  "heating": true
-}
-```
-
----
-
-## API HTTP
-
-Il server API è definito in `src/api/server.ts`.
-
-Queste API vengono usate dalla UI per:
-- leggere e aggiornare stanze
-- recuperare storico e metadati delle valvole
-- modificare setpoint e assegnazioni
-- gestire override e analitiche
 
 ### Valvole
 
-#### `GET /valves`
-Restituisce tutte le valvole presenti nel database.
+| Metodo | Endpoint | Descrizione |
+| --- | --- | --- |
+| `GET` | `/valves` | Lista valvole presenti nel DB |
+| `GET` | `/valves/:id/history` | Ultime 50 letture di temperatura |
+| `POST` | `/setpoint` | Aggiorna il setpoint di una valvola nel DB e nel controller |
+| `PUT` | `/valves/:valveId/room` | Assegna o scollega una valvola da una stanza |
+| `DELETE` | `/valves/:id` | Rimuove valvola da WoT, DB e controller |
 
-#### `GET /valves/:id/history`
-Restituisce lo storico temperature di una valvola.
-
-Esempio:
-```bash
-curl http://localhost:3001/valves/valve1/history
-```
-
-#### `POST /setpoint`
-Aggiorna il setpoint di una valvola.
-
-Body esempio:
+Body per `POST /setpoint`:
 
 ```json
 {
   "valveId": "valve1",
-  "setpoint": 21
+  "setpoint": 21.5
 }
 ```
 
-#### `POST /override`
-Attiva un override manuale temporaneo.
+Body per `PUT /valves/:valveId/room`:
 
-Body esempio:
+```json
+{
+  "roomId": "room1"
+}
+```
+
+Per scollegare una valvola:
+
+```json
+{
+  "roomId": null
+}
+```
+
+### Override
+
+| Metodo | Endpoint | Descrizione |
+| --- | --- | --- |
+| `POST` | `/override` | Forza temporaneamente `heating` ON/OFF |
+| `GET` | `/overrides` | Lista override attivi |
+| `DELETE` | `/override/:valveId` | Cancella un override attivo |
+
+Body per `POST /override`:
 
 ```json
 {
@@ -400,23 +263,21 @@ Body esempio:
 }
 ```
 
-#### `GET /overrides`
-Elenca gli override attivi.
-
-#### `DELETE /override/:valveId`
-Cancella un override attivo.
-
----
+`duration` è espresso in secondi.
 
 ### Stanze
 
-#### `GET /rooms`
-Restituisce tutte le stanze.
+| Metodo | Endpoint | Descrizione |
+| --- | --- | --- |
+| `GET` | `/rooms` | Lista stanze |
+| `POST` | `/rooms` | Crea una stanza |
+| `GET` | `/rooms/:id` | Dettaglio stanza |
+| `GET` | `/rooms/:id/valves` | Valvole associate alla stanza |
+| `PUT` | `/rooms/:id/setpoint` | Aggiorna setpoint globale e lo propaga alle valvole associate |
+| `DELETE` | `/rooms/:id` | Elimina la stanza e scollega le valvole |
+| `GET` | `/analytics/rooms` | Statistiche aggregate per stanza |
 
-#### `POST /rooms`
-Crea una nuova stanza.
-
-Body esempio:
+Body per `POST /rooms`:
 
 ```json
 {
@@ -427,13 +288,7 @@ Body esempio:
 }
 ```
 
-#### `GET /rooms/:id`
-Restituisce i dettagli di una stanza.
-
-#### `PUT /rooms/:id/setpoint`
-Aggiorna il setpoint globale di una stanza.
-
-Body esempio:
+Body per `PUT /rooms/:id/setpoint`:
 
 ```json
 {
@@ -441,156 +296,225 @@ Body esempio:
 }
 ```
 
-#### `GET /rooms/:id/valves`
-Restituisce le valvole assegnate a una stanza.
-
-#### `PUT /valves/:valveId/room`
-Assegna una valvola a una stanza.
-
-Body esempio:
-
-```json
-{
-  "roomId": "room1"
-}
-```
-
-#### `GET /analytics/rooms`
-Restituisce statistiche aggregate per stanza:
-
-- numero valvole
-- temperatura media
-- numero di valvole con riscaldamento attivo
-
----
-
-## Web interface
-
-La UI è servita da `public/index.html`.
-
-### Funzioni principali
-
-- dashboard generale
-- dettaglio valvole
-- gestione stanze
-- impostazioni
-- grafici e visualizzazione dati
-
-### Origine dei dati
-
-- **Dashboard**: combina dati da **Express** (`/valves`, `/rooms`, storico) e da **WoT** per i valori live di `temperature` e `heating`
-- **Dettagli**: usa principalmente le API **Express** per stato, stanza e storico della valvola
-- **Stanze**: usa le API **Express** per elenco, creazione e aggiornamento setpoint
-
-### Librerie frontend
-- Bootstrap 5
-- Chart.js
-
----
-
 ## Web of Things
 
-Lo script `src/wot/things.ts` espone:
+Il WoT server è definito in `src/wot/things.ts` e usa:
 
-- un Thing per ogni valvola rilevata
-- proprietà:
-  - `temperature`
-  - `heating`
-- azione:
-  - `setHeating`
+- `@node-wot/core`
+- `@node-wot/binding-http`
+- `@node-wot/binding-mqtt`
 
-Espone anche un Thing directory con la lista delle valvole disponibili.
+Base URL HTTP:
 
----
+```text
+http://localhost:8081
+```
 
-## Gap / Note (incoerenze o parti richiamate ma non presenti)
+### Directory Thing
 
-### Pagine SPA richiamate ma non presenti/complete
+Thing title:
 
-Nel router SPA (`public/js/app.js`) esiste un case per `details`:
-- `case "details": await initDetails();`
+```text
+ValveDirectory
+```
 
-Nel repository, dai file frontend enumerati, non risulta presente l’implementazione di `initDetails`.
-Inoltre `public/pages/details.html` può risultare non sincronizzato rispetto all’enumerazione file del workspace (quindi potrebbe non essere realmente presente o essere incompleta).
+Property:
 
-### WoT: URL directory Thing
+- `valves`: lista degli ID delle valvole registrate
 
-Frontend: `http://localhost:8081/valvedirectory/properties/valves`
+Action:
 
-Backend: crea una directory Thing con titolo `"ValveDirectory"`.
-Il path HTTP nella binding HTTP di node-wot dipende dal `title` normalizzato; se l’URL effettiva non coincide con `valvedirectory`, va riallineato titolo e/o URL nel frontend.
+- `register`: registra una valvola e restituisce il setpoint iniziale
 
-### Azione WoT di delete
+Endpoint usato dal frontend e dal controller:
 
-Frontend `public/js/settings.js` usa:
-- `POST http://localhost:8081/valve-${valveId}/actions/delete`
+```text
+GET /valvedirectory/properties/valves
+```
 
-Questo presuppone che l’azione `delete` esposta dalla Thing sia effettivamente presente nel binding HTTP con quel naming.
+### Valve Thing
 
----
+Per una valvola `valve1`, la Thing viene esposta come:
+
+```text
+valve-valve1
+```
+
+Properties:
+
+- `temperature`: temperatura corrente, osservabile, numero in gradi Celsius
+- `heating`: stato riscaldamento, osservabile, booleano
+- `setpoint`: temperatura target, osservabile, numero in gradi Celsius
+
+Actions:
+
+- `updateStatus`: riceve telemetria dal simulatore
+- `setHeating`: imposta lo stato del riscaldamento
+- `setTargetTemperature`: aggiorna il setpoint e lo salva nel DB
+- `delete`: rimuove la Thing
+
+Esempi HTTP:
+
+```bash
+curl http://localhost:8081/valve-valve1/properties/temperature
+curl http://localhost:8081/valve-valve1/properties/heating
+curl http://localhost:8081/valve-valve1/properties/setpoint
+```
+
+## Frontend
+
+La web app è servita da Express a partire da `public/index.html`.
+
+Pagine disponibili:
+
+- `dashboard`: panoramica valvole, metriche, grafici, stato live e storico
+- `rooms`: creazione stanze, metriche per stanza, setpoint globale e cancellazione
+- `settings`: selezione valvola, stato live, cambio setpoint, assegnazione stanza, override e rimozione valvola
+
+File principali:
+
+- `public/js/app.js`: router hash-based, tema chiaro/scuro/sistema, configurazione URL API/WoT
+- `public/js/dashboard.js`: aggrega dati da REST e WoT, grafici e tabella valvole
+- `public/js/rooms.js`: CRUD principale delle stanze
+- `public/js/settings.js`: gestione operativa delle singole valvole
+- `public/css/style.css`: stile dell'interfaccia
+
+Origine dati:
+
+- Express REST: stanze, storico, associazioni, override, stato persistito
+- WoT HTTP: temperatura, heating, setpoint e lista valvole live
+
+## Database
+
+SQLite viene inizializzato in `src/db/database.ts`.
+
+Path di default:
+
+```text
+thermostat.db
+```
+
+### `valves`
+
+| Colonna | Tipo | Significato |
+| --- | --- | --- |
+| `id` | `TEXT PRIMARY KEY` | ID valvola, ad esempio `valve1` |
+| `setpoint` | `REAL` | Temperatura target |
+| `heating` | `INTEGER` | Stato riscaldamento, `0` o `1` |
+| `status` | `TEXT` | `ONLINE` o `OFFLINE` |
+| `last_seen` | `DATETIME` | Ultimo aggiornamento |
+| `temperature` | `REAL` | Ultima temperatura nota |
+| `room_id` | `TEXT` | Stanza associata |
+
+### `rooms`
+
+| Colonna | Tipo | Significato |
+| --- | --- | --- |
+| `id` | `TEXT PRIMARY KEY` | ID stanza |
+| `name` | `TEXT NOT NULL` | Nome leggibile |
+| `description` | `TEXT` | Descrizione opzionale |
+| `global_setpoint` | `REAL` | Setpoint comune della stanza |
+
+### `temperature_readings`
+
+| Colonna | Tipo | Significato |
+| --- | --- | --- |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID lettura |
+| `valve_id` | `TEXT` | Valvola associata |
+| `temperature` | `REAL` | Temperatura registrata |
+| `timestamp` | `DATETIME` | Timestamp della lettura |
+
+## Ontologia
+
+Il file `ontology.ttl` descrive il dominio semantico del termostato:
+
+- classi `Valve` e `ValveDirectory`
+- relazione `managesValve`
+- proprietà `hasTemperature`, `hasHeating`, `hasSetpoint`
+- classi azione `RegisterAction`, `UpdateStatusAction`, `SetHeatingAction`, `SetTargetTemperatureAction`, `DeleteAction`
+
+I file in `src/wot/models/` definiscono i modelli WoT astratti, cioe la struttura riusabile di valvole e directory. I file in `src/wot/descriptions/` generano invece le Thing Description concrete passate a `wot.produce(...)`, aggiungendo `title` e `description` specifici dell'istanza.
 
 ## Struttura del progetto
 
 ```text
-public/
-  index.html
-  css/
-  js/
-  pages/
-
-src/
-  api/
-  controller/
-  db/
-  mqtt/
-  simulator/
-  utils/
-  wot/
+.
+├── ontology.ttl
+├── package.json
+├── thermostat.db
+├── tsconfig.json
+├── public/
+│   ├── index.html
+│   ├── css/style.css
+│   ├── js/
+│   │   ├── app.js
+│   │   ├── dashboard.js
+│   │   ├── rooms.js
+│   │   └── settings.js
+│   └── pages/
+│       ├── dashboard.html
+│       ├── rooms.html
+│       └── settings.html
+└── src/
+    ├── api/server.ts
+    ├── controller/controller.ts
+    ├── db/database.ts
+    ├── db/repository.ts
+    ├── simulator/valveSimulator.ts
+    ├── utils/logger.ts
+    └── wot/
+        ├── descriptions/
+        │   ├── directoryThingDescription.ts
+        │   └── valveThingDescription.ts
+        ├── models/
+        │   ├── directoryThingModel.ts
+        │   └── valveThingModel.ts
+        ├── things.ts
 ```
 
-### File principali
+## Esempi rapidi
 
-- `src/api/server.ts` — API REST e server statico
-- `src/controller/controller.ts` — logica di controllo
-- `src/simulator/valveSimulator.ts` — simulatore valvola
-- `src/mqtt/mqttClient.ts` — client MQTT di test
-- `src/db/database.ts` — schema SQLite
-- `src/db/repository.ts` — funzioni di accesso ai dati
-- `src/wot/things.ts` — esposizione WoT
-
----
-
-## Note utili
-
-- Il database locale è `thermostat.db`
-- Le valvole valide seguono il pattern `valveN` ad esempio `valve1`, `valve2`, `valve10`
-- Il controller usa una logica con **isteresi** per evitare continue accensioni e spegnimenti
-- Una valvola viene marcata **OFFLINE** se non invia dati per 30 secondi
-- La documentazione è allineata all’implementazione attuale del progetto
-
----
-
-## Flusso di sviluppo consigliato
-
-Se vuoi provare il sistema in locale, avvia i componenti in quest’ordine:
-
-1. broker MQTT
-2. controller
-3. simulatore valvola
-4. API / web app
-5. browser su `http://localhost:3001`
-
-Esempio:
+Creare una stanza:
 
 ```bash
-npm run controller
-npm run simulator -- valve1
-npm run dev
+curl -X POST http://localhost:3001/rooms \
+  -H "Content-Type: application/json" \
+  -d '{"id":"room1","name":"Soggiorno","description":"Zona giorno","globalSetpoint":21}'
 ```
 
-Poi apri:
+Assegnare una valvola alla stanza:
 
-- `http://localhost:3001`
+```bash
+curl -X PUT http://localhost:3001/valves/valve1/room \
+  -H "Content-Type: application/json" \
+  -d '{"roomId":"room1"}'
+```
 
----
+Attivare un override ON per 60 secondi:
 
+```bash
+curl -X POST http://localhost:3001/override \
+  -H "Content-Type: application/json" \
+  -d '{"valveId":"valve1","state":true,"duration":60}'
+```
+
+Leggere gli override attivi:
+
+```bash
+curl http://localhost:3001/overrides
+```
+
+Leggere la temperatura live via WoT:
+
+```bash
+curl http://localhost:8081/valve-valve1/properties/temperature
+```
+
+## Note tecniche
+
+- Il controller resetta lo stato delle valvole a `OFFLINE` al boot.
+- Una valvola torna `ONLINE` quando il controller riceve nuovamente aggiornamenti WoT.
+- Il controller rileva inattività ogni 10 secondi e marca una valvola `OFFLINE` dopo 30 secondi senza aggiornamenti.
+- Lo storico restituito da `/valves/:id/history` è ordinato dal più recente al meno recente e limitato a 50 righe.
+- La cancellazione di una valvola tenta prima di invocare l'action WoT `delete`, poi rimuove dati da DB e controller.
+- Le pagine `details` e `wot` sono citate nel router, ma nel repository attuale non sono presenti i file HTML/JS corrispondenti.
