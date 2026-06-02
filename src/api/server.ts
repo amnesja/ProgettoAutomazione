@@ -32,9 +32,8 @@ app.use(express.json());
 const VALID_VALVE_ID = /^valve\d+$/i;
 const WOT_HTTP_URL = `http://localhost:${process.env.WOT_PORT || 8081}`;
 
-// =========================================================================
-// 🎯 SEZIONE VALVOLE & STORICO (REST interroga DB / Controller coordina)
-// =========================================================================
+// SEZIONE VALVOLE & STORICO (REST interroga DB / Controller coordina)
+
 
 // GET /valves → Lista configurazioni valvole da DB
 app.get("/valves", (req, res) => {
@@ -61,8 +60,8 @@ app.post("/setpoint", (req, res) => {
     return res.status(400).json({ error: "Invalid valve id format" });
   }
 
-  updateSetpoint(valveId, setpoint);         // 1. Aggiorna DB locale
-  updateManualSetpoint(valveId, setpoint);   // 2. Aggiorna RAM Controller -> lancia Action HTTP al WoT
+  updateSetpoint(valveId, setpoint);         // Aggiorna DB locale
+  updateManualSetpoint(valveId, setpoint);   // Aggiorna RAM Controller -> lancia Action HTTP al WoT
 
   res.json({ message: "Setpoint updated and synced via WoT", valveId, setpoint });
 });
@@ -76,22 +75,22 @@ app.delete("/valves/:id", async (req, res) => {
   }
 
   try {
-    // 1. Invocazione dell'azione di cancellazione verso il Server WoT per distruggere la Thing
+    // Invocazione dell'azione di cancellazione verso il Server WoT per distruggere la Thing
     await fetch(`${WOT_HTTP_URL}/valve-${valveId}/actions/delete`, { method: 'POST' });
     console.log(`🗑️ [WoT Action] Invocata eliminazione della Thing valve-${valveId}`);
   } catch (err: any) {
     console.warn(`⚠️ Impossibile comunicare la cancellazione al Server WoT (forse già spento):`, err.message);
   }
 
-  deleteValve(valveId);     // 2. Rimuove dal DB locale
-  removeValve(valveId);     // 3. Rimuove dalla RAM del Controller e fa l'unsubscribed MQTT
+  deleteValve(valveId);     // Rimuove dal DB locale
+  removeValve(valveId);     // Rimuove dalla RAM del Controller e fa l'unsubscribed MQTT
 
   res.json({ success: true, message: `Valve ${valveId} removed completely from DB, Controller and WoT` });
 });
 
-// =========================================================================
-// ⚠️ SEZIONE OVERRIDE (Invocano i metodi operativi del Controller)
-// =========================================================================
+
+// SEZIONE OVERRIDE (Invocano i metodi operativi del Controller)
+
 
 // POST /override → Attiva override manuale temporizzato
 app.post("/override", (req, res) => {
@@ -139,9 +138,9 @@ app.delete("/override/:valveId", (req, res) => {
   res.json({ message: "Override cancelled successfully", valveId });
 });
 
-// =========================================================================
-// 🏢 SEZIONE STANZE & ASSEGNAMENTI (Business logica e cascata dati)
-// =========================================================================
+
+// SEZIONE STANZE & ASSEGNAMENTI (Business logica e cascata dati)
+
 
 // GET /rooms → Lista stanze
 app.get("/rooms", (req, res) => {
@@ -204,10 +203,10 @@ app.put("/rooms/:id/setpoint", (req, res) => {
     return res.status(400).json({ error: "setpoint must be a valid number" });
   }
 
-  updateRoomSetpoint(roomId, setpoint); // 1. Aggiorna il setpoint della stanza nel DB
-  const associatedValves = getValvesByRoom(roomId); // 2. Recupera le valvole in quella stanza
+  updateRoomSetpoint(roomId, setpoint); // Aggiorna il setpoint della stanza nel DB
+  const associatedValves = getValvesByRoom(roomId); // Recupera le valvole in quella stanza
 
-  // 3. Forza l'allineamento a cascata sia sul DB delle valvole che sul WoT hardware
+  // Forza l'allineamento a cascata sia sul DB delle valvole che sul WoT hardware
   if (Array.isArray(associatedValves)) {
     associatedValves.forEach((v: any) => {
       updateSetpoint(v.id, setpoint);       
@@ -240,9 +239,9 @@ app.delete("/rooms/:id", (req, res) => {
   res.json({ message: "Room deleted and nested valves detached successfully" });
 });
 
-// =========================================================================
-// 📁 SERVING STATIC FILES & BOOT
-// =========================================================================
+
+// SERVING STATIC FILES & BOOT
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

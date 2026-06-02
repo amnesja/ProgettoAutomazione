@@ -9,7 +9,7 @@ async function initRooms() {
 }
 
 /**
- * 🏢 CALL REST API (Express Rooms): Estrae le stanze ed interroga i link fisici strutturati
+ * CALL REST API (Express Rooms): Estrae le stanze ed interroga i link fisici strutturati
  */
 async function loadRoomsPage() {
   try {
@@ -113,7 +113,7 @@ function renderRoomsList() {
 }
 
 /**
- * 🏢 CALL REST API (Express Nuova Stanza): Registra una nuova entità ambiente nel DB locale
+CALL REST API (Express Nuova Stanza): Registra una nuova entità ambiente nel DB locale
  */
 function setupRoomForm() {
   const form = document.getElementById("createRoomForm");
@@ -154,7 +154,7 @@ function viewRoomValves(roomId) {
 }
 
 /**
- * 🏢 CALL REST API (Express Setpoint Cascata): Invia un target comune. 
+ * CALL REST API (Express Setpoint Cascata): Invia un target comune. 
  * Sarà poi Express a propagare l'aggiornamento verso ogni Thing WoT associata.
  */
 async function editRoomSetpoint(roomId) {
@@ -201,7 +201,7 @@ function numberOrFallback(value, fallback) {
 }
 
 /**
- * 🏢 CALL REST API (Express Delete Room): Rimuove la stanza lasciando libere le valvole sul database
+ * CALL REST API (Express Delete Room): Rimuove la stanza lasciando libere le valvole sul database
  */
 async function deleteRoomAction(roomId) {
   const confirmed = confirm(`Sei sicuro di voler eliminare la stanza "${roomId}"? Le valvole associate verranno liberate sia sul DB che sul Controller.`);

@@ -10,7 +10,7 @@ let setpointGauge;
 
 const VALID_VALVE_ID = /^valve\d+$/i;
 
-// 🌟 LETTURA SICURA SENZA CONFLITTI: Recuperiamo gli endpoint globali definiti in app.js
+// Recuperiamo gli endpoint globali definiti in app.js
 var API_BASE = window.REST_API_URL || "http://localhost:3001";
 var WOT_BASE = window.WOT_SERVER_URL || "http://localhost:8081";
 
@@ -62,7 +62,7 @@ async function refreshDashboardData() {
 }
 
 /**
- * 🏢 CALL REST API (Express): Recupera le stanze dal database locale
+ CALL REST API (Express): Recupera le stanze dal database locale
  */
 async function loadDashboardRooms(issues) {
   try {
@@ -76,13 +76,13 @@ async function loadDashboardRooms(issues) {
 }
 
 /**
- * 📡 COMBINATO WOT DIRECTORY + REST API
+COMBINATO WOT DIRECTORY + REST API
  */
 async function loadValves(issues) {
   try {
     let wotValveIds = [];
     try {
-      // 📡 CALL WOT SERVER: Recupera l'elenco delle valvole attive direttamente dalla Directory del WoT
+      // CALL WOT SERVER: Recupera l'elenco delle valvole attive direttamente dalla Directory del WoT
       wotValveIds = await fetchJson(`${WOT_BASE}/valvedirectory/properties/valves`);
       if (!Array.isArray(wotValveIds)) wotValveIds = [];
     } catch (err) {
@@ -97,7 +97,7 @@ async function loadValves(issues) {
       return;
     }
 
-    // 🏢 CALL REST API (Express): Chiede lo stato strutturale registrato nel DB amministrativo
+    // CALL REST API (Express): Chiede lo stato strutturale registrato nel DB amministrativo
     const dbValves = await fetchJson(`${API_BASE}/valves`).catch(() => []);
     
     const onlineDbValveMap = Object.fromEntries(
@@ -112,7 +112,7 @@ async function loadValves(issues) {
         .map(async (id) => {
           const dbInfo = onlineDbValveMap[id];
           
-          // 📡 CALL WOT THING (Diretta): Interroga l'istanza specifica della valvola sul WoT per i dati fisici al volo
+          // CALL WOT THING (Diretta): Interroga l'istanza specifica della valvola sul WoT per i dati fisici al volo
           const liveState = await loadValveLiveState(id);
 
           return {
@@ -134,7 +134,7 @@ async function loadValves(issues) {
 }
 
 /**
- * 📡 CALL WOT THING (Diretta): Scarica le proprietà in tempo reale della Thing WoT
+CALL WOT THING (Diretta): Scarica le proprietà in tempo reale della Thing WoT
  */
 async function loadValveLiveState(valveId) {
   const thingName = `valve-${valveId}`;
@@ -257,7 +257,7 @@ async function renderCharts() {
 }
 
 /**
- * 🏢 CALL REST API (Express Storico): Interroga il database per l'estrazione cronologica
+CALL REST API (Express Storico): Interroga il database per l'estrazione cronologica
  */
 async function renderHistoryChart() {
   const canvas = document.getElementById("historyChart");
@@ -503,7 +503,7 @@ function numberOrFallback(value, fallback) {
 }
 
 /**
- * 🏢 CALL REST API (Express Salva Relazione): Configura il link logico della valvola nel DB amministrativo
+CALL REST API (Express Salva Relazione): Configura il link logico della valvola nel DB amministrativo
  */
 async function assignValveRoom(valveId) {
   const select = document.getElementById(`room-select-${valveId}`);

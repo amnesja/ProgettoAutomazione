@@ -2,10 +2,9 @@ import { Servient } from '@node-wot/core';
 import { HttpServer } from '@node-wot/binding-http';
 import { MqttBrokerServer } from '@node-wot/binding-mqtt';
 import dotenv from 'dotenv';
-
-// ✅ Importazioni reali dal tuo Database e Repository
-import db from "../db/database.js";
-import { updateSetpoint, getRoomById } from "../db/repository.js";
+import { updateSetpoint, getValveById } from "../db/repository.js";
+import { valveThingModel } from "./valveTemplate.tm.js";
+import { directoryThingModel } from "./directoryTemplate.tm.js";
 
 dotenv.config();
 
@@ -27,48 +26,22 @@ const VALID_VALVE_ID = /^valve\d+$/i;
 
 const DEFAULT_SETPOINT = 20;
 
-// ==========================================
 // CREAZIONE COSA GENERICA (VALVOLA)
-// ==========================================
 async function createThing(valveId: string, initialSetpoint: number) {
   const thingTitle = `valve-${valveId}`;
 
   // Inizializziamo lo stato in memoria con il setpoint estratto dal DB
   valveStates[valveId] = {
-    temperature: 20.0, // Verrà aggiornato immediatamente dal simulatore via updateStatus
+    temperature: 20.0, 
     heating: false,
     setpoint: initialSetpoint
   };
 
-  const thing = await wot.produce({
-    title: thingTitle,
-    description: `Smart thermostat valve ${valveId}`,
-    properties: {
-      temperature: { type: 'number', readOnly: true, observable: true },
-      heating: { type: 'boolean', readOnly: true, observable: true },
-      setpoint: { type: 'number', readOnly: true, observable: true } 
-    },
-    actions: {
-      // Azione continua invocata dal simulatore (telemetria)
-      updateStatus: {
-        input: {
-          type: 'object',
-          properties: {
-            temperature: { type: 'number' },
-            heating: { type: 'boolean' }
-          },
-          required: ['temperature', 'heating']
-        }
-      },
-      // Azione usata dal Controller esterno per cambiare l'heating
-      setHeating: { input: { type: 'boolean' } },
-      
-      // Azione per cambiare manualmente il setpoint da Controller
-      setTargetTemperature: { input: { type: 'number' } },
-      
-      delete: {}
-    }
-  });
+  //Recuperiamo la Thing Description pulita e annotata semanticamente dal file esterno
+  const tdConfig = valveThingModel(valveId);
+
+  //Produciamo la Thing passando la TD generata dal template esterno
+  const thing = await wot.produce(tdConfig);
 
   // Handler Lettura Proprietà (Interfaccia WoT standard)
   thing.setPropertyReadHandler('temperature', () => Promise.resolve(valveStates[valveId]?.temperature));
@@ -82,11 +55,12 @@ async function createThing(valveId: string, initialSetpoint: number) {
       const newTemp = parseFloat(data.temperature);
       const newHeating = Boolean(data.heating);
 
-      // Emette il cambiamento solo se i valori sono realmente mutati
+      // Emette il cambiamento solo se la temperatura è realmente mutati
       if (valveStates[valveId].temperature !== newTemp) {
         valveStates[valveId].temperature = newTemp;
         thing.emitPropertyChange('temperature');
       }
+
       valveStates[valveId].heating = newHeating;
       thing.emitPropertyChange('heating');
     }
@@ -99,11 +73,11 @@ async function createThing(valveId: string, initialSetpoint: number) {
     const isHeating = Boolean(value);
     
     if (valveStates[valveId]) {
-      // ✅ MODIFICA: Logga ed emette l'evento SOLO se lo stato dell'heating sta cambiando
+      // MODIFICA: Logga ed emette l'evento SOLO se lo stato dell'heating sta cambiando
       if (valveStates[valveId].heating !== isHeating) {
         valveStates[valveId].heating = isHeating;
         thing.emitPropertyChange('heating'); 
-        console.log(`🔥 [WoT Server] setHeating per ${valveId} impostato a: ${isHeating}`);
+        console.log(`[WoT Server] setHeating per ${valveId} impostato a: ${isHeating}`);
       }
     }
     return Promise.resolve();
@@ -115,7 +89,7 @@ async function createThing(valveId: string, initialSetpoint: number) {
     const newSetpoint = parseFloat(value);
     
     if (!isNaN(newSetpoint) && valveStates[valveId]) {
-      // ✅ MODIFICA: Salva nel DB, logga ed emette l'evento SOLO se cambia il setpoint
+      // Salva nel DB, logga ed emette l'evento SOLO se cambia il setpoint
       if (valveStates[valveId].setpoint !== newSetpoint) {
         valveStates[valveId].setpoint = newSetpoint;
         
@@ -152,30 +126,12 @@ export function removeThing(valveId: string) {
   console.log(`🗑️ Thing WoT rimosso: valve-${valveId}`);
 }
 
-// ==========================================
-// 📘 CREAZIONE VALVE DIRECTORY
-// ==========================================
+
+// CREAZIONE VALVE DIRECTORY
 async function createDirectoryThing() {
-  const directory = await wot.produce({
-    title: "ValveDirectory",
-    description: "List and registration gateway for all available valves",
-    properties: {
-      valves: { type: "array", readOnly: true }
-    },
-    actions: {
-      register: {
-        input: {
-          type: "object",
-          properties: { id: { type: "string" } },
-          required: ["id"]
-        },
-        output: {
-          type: "object",
-          properties: { setpoint: { type: "number" } }
-        }
-      }
-    }
-  });
+
+  // Produciamo la Directory usando direttamente l'oggetto importato dal file esterno
+  const directory = await wot.produce(directoryThingModel);
 
   directory.setPropertyReadHandler("valves", () => Promise.resolve(Object.keys(things)));
 
@@ -184,40 +140,37 @@ async function createDirectoryThing() {
       const data = await input.value();
       const { id } = data;
 
+      // 1. Validazione formale dell'ID della valvola
       if (!id || !VALID_VALVE_ID.test(id)) {
         throw new Error("ID Valvola non valido");
       }
 
+      // Impostiamo il setpoint di fabbrica (20°C) come base di partenza
       let currentSetpoint = DEFAULT_SETPOINT;
       
       try {
-        const valveFromDb = db.prepare("SELECT setpoint, room_id FROM valves WHERE id = ?").get(id) as any;
+        // Chiamiamo il repository per vedere se la valvola esiste già
+        const valveFromDb = getValveById(id) as any;
         
         if (valveFromDb) {
+          // Caso A: La valvola esiste nel DB, carichiamo il suo setpoint personalizzato
           currentSetpoint = valveFromDb.setpoint;
-          console.log(`💾 [DB] Trovata valvola ${id}. Setpoint caricato: ${currentSetpoint}°C`);
+          console.log(`💾 [Repository] Trovata valvola ${id}. Setpoint caricato: ${currentSetpoint}°C`);
         } else {
-          console.log(`💾 [DB] Valvola ${id} non presente nel DB. Controllo ereditarietà stanza...`);
-          
-          // Se la valvola non esiste ancora, proviamo a vedere se esiste una stanza di default con lo stesso nome o ID
-          const fallbackRoom = getRoomById(id); 
-          if (fallbackRoom) {
-            currentSetpoint = (fallbackRoom as any).global_setpoint;
-            console.log(`💾 [DB] Stanza di fallback trovata per ${id}. Setpoint globale ereditato: ${currentSetpoint}°C`);
-          }
+          // Caso B: La valvola è nuova nel DB e lasciamo il setpoint di default (20°C) e lo logghiamo.
+          console.log(`💾 [Repository] Nuova valvola ${id} rilevata. Assegnato setpoint di default: ${currentSetpoint}°C`);
         }
       } catch (dbErr) {
-        console.error("⚠️ Errore durante la lettura dal database SQLite, uso il valore di default:", dbErr);
+        console.error("⚠️ Errore durante la lettura dal database, uso il valore di default:", dbErr);
       }
 
+      // 2. Gestione del Gemello Digitale (RAM del Server WoT)
       if (!things[id]) {
         console.log(`✨ [Directory] Nuova valvola hardware rilevata: ${id}. Generazione Thing...`);
         await createThing(id, currentSetpoint);
         directory.emitPropertyChange('valves');
       } else {
         console.log(`🔄 [Directory] Valvola ${id} già istanziata. Invio configurazione corrente.`);
-        // 🔥 SOLUZIONE: Forza il server WoT a ri-pubblicare lo stato attuale sui topic delle proprietà.
-        // In questo modo il simulatore appena riconnesso riceverà subito i valori corretti tramite i suoi subscribe!
         const existingThing = things[id];
         if (existingThing) {
           existingThing.emitPropertyChange('setpoint');
@@ -225,7 +178,7 @@ async function createDirectoryThing() {
         }
       }
 
-      // Rispondiamo al simulatore passandogli il setpoint ufficiale
+      // 3. Risposta formale all'hardware (Output dell'Action)
       return Promise.resolve({ setpoint: valveStates[id].setpoint });
     } catch (err: any) {
       console.error("❌ Errore durante la registrazione:", err.message);

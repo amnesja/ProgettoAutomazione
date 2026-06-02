@@ -2,13 +2,13 @@
 if (typeof window.settingsRefreshTimer === "undefined") window.settingsRefreshTimer = null;
 if (typeof window.liveStatusTimer === "undefined") window.liveStatusTimer = null;
 
-// 🌟 LETTURA SICURA: Usa gli URL globalizzati per azzerare i crash di sintassi
+// LETTURA SICURA: Usa gli URL globalizzati per azzerare i crash di sintassi
 var API_BASE = window.REST_API_URL || "http://localhost:3001";
 var WOT_BASE = window.WOT_SERVER_URL || "http://localhost:8081";
 
-/**
- * 🌟 INIT EXPORT: Agganciato esplicitamente a window per il router
- */
+
+//INIT EXPORT: Agganciato esplicitamente a window per il router
+
 window.initSettings = async function() {
   if (window.settingsRefreshTimer) clearInterval(window.settingsRefreshTimer);
   if (window.liveStatusTimer) clearInterval(window.liveStatusTimer);
@@ -19,19 +19,18 @@ window.initSettings = async function() {
   window.liveStatusTimer = setInterval(refreshLiveStatus, 3000);
 };
 
-/**
- * 📡 CONSUMER BIVIO: Proprietà fisiche dal WoT, metadati strutturali da Express
- */
+// CONSUMER BIVIO: Proprietà fisiche dal WoT, metadati strutturali da Express
+ 
 async function refreshLiveStatus() {
   const valveId = window.selectedValve;
   if (!valveId) return;
 
   try {
-    // 1. 📡 CALL WOT THING (Diretta): Proprietà fisiche real-time prese dal simulatore WoT
+    // 1. CALL WOT THING (Diretta): Proprietà fisiche real-time prese dal simulatore WoT
     const temperature = await fetchJson(`${WOT_BASE}/valve-${valveId}/properties/temperature`);
     const heating = await fetchJson(`${WOT_BASE}/valve-${valveId}/properties/heating`);
 
-    // 2. 🏢 CALL REST API (Express): Stato amministrativo conservato nel DB
+    // 2. CALL REST API (Express): Stato amministrativo conservato nel DB
     const valvesDb = await fetchJson(`${API_BASE}/valves`);
     const valveDb = valvesDb.find(v => v.id == valveId || v.id == valveId.replace("valve-", ""));
     
@@ -62,7 +61,7 @@ async function renderSettingsPage() {
 
   let valves = [];
   try {
-    // 📡 CALL WOT SERVER: Recupera l'elenco delle valvole registrate in rete
+    // CALL WOT SERVER: Recupera l'elenco delle valvole registrate in rete
     const valveList = await fetchJson(`${WOT_BASE}/valvedirectory/properties/valves`);
     valves = Array.isArray(valveList) ? valveList : [];
   } catch (err) {
@@ -103,11 +102,11 @@ async function renderSettingsPage() {
   localStorage.setItem("settingsSelectedValve", valveId);
 
   try {
-    // 📡 FETCH DIRETTI WOT PER TEMPERATURA E RISCALDAMENTO
+    // FETCH DIRETTI WOT PER TEMPERATURA E RISCALDAMENTO
     const temperature = await fetchJson(`${WOT_BASE}/valve-${valveId}/properties/temperature`);
     const heating = await fetchJson(`${WOT_BASE}/valve-${valveId}/properties/heating`);
     
-    // 🏢 CHIAMATA API REST PER METADATI DB
+    // CHIAMATA API REST PER METADATI DB
     const valvesDb = await fetchJson(`${API_BASE}/valves`);
     const valveDb = valvesDb.find(v => v.id == valveId || v.id == valveId.replace("valve-", ""));
 
@@ -203,24 +202,26 @@ function selectValveForSettings() {
   renderSettingsPage();
 }
 
-/**
- * 🏢 CHIAMATA REST API (Express): Salva il setpoint nel database amministrativo
- */
+
+// CHIAMATA Action Wot (Salva il setpoint anche nel db)
+
 async function updateSetpoint(valveId) {
   const inputEl = document.getElementById("newSetpoint");
   if (!inputEl) return;
   const val = Number(inputEl.value);
-  await fetchJson(`${API_BASE}/setpoint`, {
+
+  // Invochiamo DIRETTAMENTE l'azione semantica del WoT
+  await fetchJson(`${WOT_BASE}/valve-${valveId}/actions/setTargetTemperature`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ valveId, setpoint: val })
+    body: JSON.stringify(val) // o il payload richiesto dall'action
   });
   renderSettingsPage();
 }
 
-/**
- * 🏢 CHIAMATA REST API (Express): Associa stanza e valvola nel database
- */
+
+// CHIAMATA REST API (Express): Associa stanza e valvola nel database
+
 async function assignRoomSettings(valveId) {
   const selectEl = document.getElementById("roomSelect");
   if (!selectEl) return;
@@ -233,9 +234,9 @@ async function assignRoomSettings(valveId) {
   renderSettingsPage();
 }
 
-/**
- * 🏢 CHIAMATA REST API (Express): Disassocia la stanza dalla valvola nel DB
- */
+
+// CHIAMATA REST API (Express): Disassocia la stanza dalla valvola nel DB
+
 async function removeRoomFromValve(valveId) {
   await fetchJson(`${API_BASE}/valves/${valveId}/room`, {
     method: "PUT",
@@ -257,9 +258,9 @@ function updateRoomButton(valveId, currentRoomId) {
   }
 }
 
-/**
- * 🏢 CHIAMATA REST API (Express): Forza un'attivazione temporanea via Express REST
- */
+
+// CHIAMATA REST API (Express): Forza un'attivazione temporanea via Express REST
+
 async function activateOverride(valveId) {
   const stateEl = document.getElementById("overrideState");
   const durationEl = document.getElementById("overrideDuration");
@@ -275,17 +276,17 @@ async function activateOverride(valveId) {
   renderSettingsPage();
 }
 
-/**
- * 🏢 CHIAMATA REST API (Express): Cancella l'override manuale attivo
- */
+
+// CHIAMATA REST API (Express): Cancella l'override manuale attivo
+
 async function cancelOverrideSettings(valveId) {
   await fetchJson(`${API_BASE}/override/${valveId}`, { method: "DELETE" });
   renderSettingsPage();
 }
 
-/**
- * 🏢 CHIAMATA REST API (Express): Cancella definitivamente la valvola dai record
- */
+
+// CHIAMATA REST API (Express): Cancella definitivamente la valvola dai record
+
 async function deleteSelectedValve() {
   const selectEl = document.getElementById("settingsValveSelect");
   if (!selectEl) return;

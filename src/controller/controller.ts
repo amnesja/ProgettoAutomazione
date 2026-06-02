@@ -2,17 +2,11 @@ import mqtt from "mqtt";
 import dotenv from "dotenv";
 import db from "../db/database.js";
 import { logEvent } from "../utils/logger.js";
-import {
-  upsertValve,
-  insertTemperature,
-  updateValveStatus,
-  getRoomById,
-  assignValveToRoom as persistValveRoomAssignment,
-} from "../db/repository.js";
+import {upsertValve, insertTemperature, updateValveStatus, getValveById, assignValveToRoom as persistValveRoomAssignment, } from "../db/repository.js";
 
 dotenv.config();
 
-// --- 1. CONFIGURAZIONI E STATO IN RAM ---
+//  CONFIGURAZIONI E STATO IN RAM 
 const brokerUrl = process.env.MQTT_BROKER || "mqtt://localhost:1883";
 const WOT_HTTP_URL = `http://localhost:${process.env.WOT_PORT || 8081}`;
 const client = mqtt.connect(brokerUrl);
@@ -37,34 +31,49 @@ const overrides: Record<string, Override> = {};
   }
 })();
 
-// --- 2. GESTIONE BOOT E SCOPERTA THING (WoT Consumer Init) ---
+// GESTIONE BOOT E SCOPERTA THING
 
-function initializeValvesFromList(activeValves: string[]) {
-  activeValves.forEach((valveId) => {
-    if (valves[valveId]) return;
+async function initializeValvesFromList(activeValves: string[]) {
+  for (const valveId of activeValves) {
+    if (valves[valveId]) continue;
 
-    console.log(`📡 [WoT Consumer] Rilevata Thing: ${valveId}. Avvio monitoraggio...`);
+    console.log(`[WoT Consumer] Rilevata Thing: ${valveId}. Avvio monitoraggio...`);
     
-    // Recupero ereditarietà setpoint della stanza dal DB locale
-    const valveFromDb = db.prepare("SELECT room_id FROM valves WHERE id = ?").get(valveId) as any;
-    const roomId = valveFromDb?.room_id;
-    let setpoint = DEFAULT_SETPOINT;
-    if (roomId) {
-      const room = getRoomById(roomId) as any;
-      if (room) setpoint = room.global_setpoint;
+    // Interroghiamo il DB usando la funzione esportata dal repository!
+    const valveFromDb = getValveById(valveId) as any;
+    const roomId = valveFromDb?.room_id || undefined; // Se c'è la stanza la prende, altrimenti undefined
+    
+    let setpoint = DEFAULT_SETPOINT; // Fallback di fabbrica
+
+    //Leggiamo il setpoint REALE e aggiornato direttamente dal Server WoT
+    try {
+      const response = await fetch(`${WOT_HTTP_URL}/valve-${valveId}/properties/setpoint`);
+      if (response.ok) {
+        setpoint = await response.json() as number;
+        console.log(`[WoT Consumer] Setpoint reale letto dal WoT per ${valveId}: ${setpoint}°C`);
+      }
+    } catch (err) {
+      // Se il WoT non risponde, proviamo ad usare il setpoint memorizzato nel DB come paracadute
+      if (valveFromDb?.setpoint) {
+        setpoint = valveFromDb.setpoint;
+      }
+      console.warn(`⚠️ Impossibile leggere dal WoT per ${valveId}, uso il valore del DB o di default.`);
     }
 
-    // Inizializza lo specchio in RAM
-    valves[valveId] = { temperature: 20.0, heating: false, setpoint, lastSeen: Date.now(), status: 'ONLINE', roomId };
+    // Inizializziamo le valvole in RAM 
+    valves[valveId] = { 
+      temperature: 20.0, 
+      heating: false, 
+      setpoint, 
+      lastSeen: Date.now(), 
+      status: 'ONLINE', 
+      roomId 
+    };
     
-    // SOTTOSTRIZIONE CONSUMER: Ascoltiamo SOLO la temperatura e il setpoint.
-    // ❌ RIMOSSO l'ascolto di properties/heating per replicare il vecchio progetto ed evitare conflitti ciclici!
+    // Iscrizione ai topic per i futuri aggiornamenti in tempo reale
     client.subscribe(`valve-${valveId}/properties/temperature`);
     client.subscribe(`valve-${valveId}/properties/setpoint`);
-
-    // Sincronizzazione iniziale del setpoint verso la Thing
-    updateManualSetpointInternal(valveId, setpoint, false);
-  });
+  }
 }
 
 client.on("connect", async () => {
@@ -85,7 +94,7 @@ client.on("connect", async () => {
   }
 });
 
-// --- 3. ASCOLTO AGGIORNAMENTI PROPRIETÀ (WoT Consumer Inbound) ---
+// ASCOLTO AGGIORNAMENTI PROPRIETÀ 
 
 client.on("message", (topic, message) => {
   try {
@@ -123,9 +132,9 @@ client.on("message", (topic, message) => {
       valves[valveId].setpoint = parseFloat(payload);
     }
 
-    console.log(`🔄 [RAM Update] ${valveId} -> Temp: ${valves[valveId].temperature}°C | Heating: ${valves[valveId].heating} | Setpoint: ${valves[valveId].setpoint}°C`);
+    console.log(`[RAM Update] ${valveId} -> Temp: ${valves[valveId].temperature}°C | Heating: ${valves[valveId].heating} | Setpoint: ${valves[valveId].setpoint}°C`);
 
-    // Elabora la logica ad ogni variazione ricevuta (Esattamente come nel vecchio progetto)
+    // Elabora la logica ad ogni variazione ricevuta
     executeControlLogic(valveId, isReturningOnline);
 
   } catch (err) {
@@ -133,7 +142,7 @@ client.on("message", (topic, message) => {
   }
 });
 
-// --- 4. CORE LOGICO E INVOCAZIONE AZIONI (WoT Consumer Outbound) ---
+// CORE LOGICO E INVOCAZIONE AZIONI
 
 function executeControlLogic(valveId: string, isReturningOnline: boolean) {
   const valve = valves[valveId];
@@ -146,7 +155,7 @@ function executeControlLogic(valveId: string, isReturningOnline: boolean) {
 
     if (overrideState !== currentState || isReturningOnline) {
       valve.heating = overrideState;
-      upsertValve(valveId, valve.setpoint, overrideState, valve.temperature);
+      upsertValve(valveId, valve.setpoint, overrideState, valve.temperature); // salviamo o aggiorniamo la valvola nel db 
       invokeWotAction(valveId, "setHeating", overrideState);
       console.log(`⚠️ [${valveId}] OVERRIDE FORZATO: heating = ${overrideState}`);
     }
@@ -192,7 +201,7 @@ async function invokeWotAction(valveId: string, actionName: string, payload: any
   }
 }
 
-// --- 5. INTERFACCE E METODI ESPORTATI ---
+// INTERFACCE E METODI ESPORTATI ---
 
 export function setOverride(valveId: string, state: boolean, durationSeconds: number): boolean {
   if (!valves[valveId]) return false;

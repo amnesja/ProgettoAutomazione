@@ -17,10 +17,8 @@ let setpoint = 20.0;
 
 client.on("connect", () => {
   console.log(`✅ Simulator Hardware connected (${valveId})`);
-
-  // ==========================================
+  
   // FASE 1: REGISTRAZIONE ALLA VALVE DIRECTORY
-  // ==========================================
   const registrationTopic = "ValveDirectory/actions/register";
   const registrationPayload = JSON.stringify({ id: valveId });
 
@@ -29,15 +27,11 @@ client.on("connect", () => {
 
   client.subscribe(`ValveDirectory/actions/register/responses`);
 
-  // ==========================================
   // FASE 2: ISCRIZIONE AI CAMBIAMENTI DEL CONTROLLER
-  // ==========================================
   client.subscribe(`valve-${valveId}/properties/heating`);
   client.subscribe(`valve-${valveId}/properties/setpoint`);
 
-  // ==========================================
   // FASE 3: CICLO CONTINUO DI TELEMETRIA (Ogni 5 secondi)
-  // ==========================================
   setInterval(() => {
     // Logica di simulazione fisica della temperatura
     if (heating) {
@@ -57,9 +51,7 @@ client.on("connect", () => {
   }, 5000);
 });
 
-// ==========================================
 // RICEZIONE MESSAGGI (Risposte e Comandi dal WoT)
-// ==========================================
 client.on("message", (topic, message) => {
   try {
     const rawPayload = message.toString();
@@ -89,7 +81,7 @@ client.on("message", (topic, message) => {
     // Caso C: Il Controller ha cambiato manualmente il setpoint
     if (topic === `valve-${valveId}/properties/setpoint`) {
       const targetSetpoint = parseFloat(rawPayload);
-      // ✅ MODIFICA: Logga e applica SOLO se il setpoint cambia veramente
+      // MODIFICA: Logga e applica SOLO se il setpoint cambia veramente
       if (setpoint !== targetSetpoint) {
         setpoint = targetSetpoint;
         console.log(`🎯 [${valveId} Hardware Comando] Setpoint locale aggiornato a: ${setpoint}°C`);

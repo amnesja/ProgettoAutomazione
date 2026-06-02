@@ -1,0 +1,79 @@
+@prefix : <http://example.org/wot/thermostat#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix om: <http://www.ontology-of-units-of-measure.org/resource/om-2/> .
+
+<http://example.org/wot/thermostat> rdf:type owl:Ontology ;
+    rdfs:comment "Ontologia per la gestione di valvole termostatiche intelligenti e relativo gateway di registrazione." ;
+    rdfs:label "Smart Thermostat Ontology" .
+
+#################################################################
+#    Classes (Classi)
+#################################################################
+
+:Valve rdf:type owl:Class ;
+    rdfs:label "Valve" ;
+    rdfs:comment "Rappresenta una valvola termostatica intelligente fisica o simulata." .
+
+:ValveDirectory rdf:type owl:Class ;
+    rdfs:label "Valve Directory" ;
+    rdfs:comment "Rappresenta il gateway/registro centrale che tiene traccia di tutte le valvole." .
+
+#################################################################
+#    Object Properties (Relazioni tra oggetti/classi)
+#################################################################
+
+:managesValve rdf:type owl:ObjectProperty ;
+    rdfs:domain :ValveDirectory ;
+    rdfs:range :Valve ;
+    rdfs:label "manages valve" ;
+    rdfs:comment "Relazione che connette la Directory alle singole valvole che sta gestendo." .
+
+#################################################################
+#    Datatype Properties (Attributi/Misure delle Classi)
+#################################################################
+
+:hasTemperature rdf:type owl:DatatypeProperty ;
+    rdfs:domain :Valve ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "has temperature" ;
+    rdfs:comment "La temperatura corrente rilevata dalla valvola." .
+
+:hasHeating rdf:type owl:DatatypeProperty ;
+    rdfs:domain :Valve ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "has heating status" ;
+    rdfs:comment "Lo stato dell'impianto di riscaldamento associato alla valvola (acceso/spento)." .
+
+:hasSetpoint rdf:type owl:DatatypeProperty ;
+    rdfs:domain :Valve ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "has setpoint" ;
+    rdfs:comment "La temperatura di target (setpoint) desiderata per l'ambiente." .
+
+#################################################################
+#    Actions (Classi per mappare le azioni del WoT)
+#################################################################
+
+:RegisterAction rdf:type owl:Class ;
+    rdfs:label "Register Action" ;
+    rdfs:comment "Concetto che mappa l'azione di registrazione di una nuova valvola nel sistema." .
+
+:UpdateStatusAction rdf:type owl:Class ;
+    rdfs:label "Update Status Action" ;
+    rdfs:comment "Concetto che mappa la ricezione della telemetria periodica inviata dalla valvola hardware." .
+
+:SetHeatingAction rdf:type owl:Class ;
+    rdfs:label "Set Heating Action" ;
+    rdfs:comment "Concetto che mappa il comando amministrativo di forzatura dello stato termico." .
+
+:SetTargetTemperatureAction rdf:type owl:Class ;
+    rdfs:label "Set Target Temperature Action" ;
+    rdfs:comment "Concetto che mappa il comando di cambio del setpoint della temperatura." .
+
+:DeleteAction rdf:type owl:Class ;
+    rdfs:label "Delete Action" ;
+    rdfs:comment "Concetto che mappa la rimozione e il decommissionamento della valvola dal Servient." .

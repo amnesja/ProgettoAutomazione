@@ -51,6 +51,14 @@ export function getValves() {
     .filter((valve: any) => isValidValveId(valve.id));
 }
 
+// mappa la singola valvola
+export function getValveById(id: string) {
+  if (!isValidValveId(id)) {
+    return null;
+  }
+  return db.prepare("SELECT setpoint, room_id FROM valves WHERE id = ?").get(id);
+}
+
 // storico temperatura
 export function getTemperatureHistory(valveId: string) {
   if (!isValidValveId(valveId)) {
