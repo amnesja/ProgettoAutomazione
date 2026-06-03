@@ -50,6 +50,7 @@ app.get("/valves/:id/history", (req, res) => {
 });
 
 
+
 // DELETE /valves/:id → Elimina definitivamente la valvola da tutto il sistema
 app.delete("/valves/:id", async (req, res) => {
   const valveId = req.params.id;

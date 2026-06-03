@@ -216,18 +216,9 @@ http://localhost:3001
 | --- | --- | --- |
 | `GET` | `/valves` | Lista valvole presenti nel DB |
 | `GET` | `/valves/:id/history` | Ultime 50 letture di temperatura |
-| `POST` | `/setpoint` | Aggiorna il setpoint di una valvola nel DB e nel controller |
 | `PUT` | `/valves/:valveId/room` | Assegna o scollega una valvola da una stanza |
 | `DELETE` | `/valves/:id` | Rimuove valvola da WoT, DB e controller |
 
-Body per `POST /setpoint`:
-
-```json
-{
-  "valveId": "valve1",
-  "setpoint": 21.5
-}
-```
 
 Body per `PUT /valves/:valveId/room`:
 
