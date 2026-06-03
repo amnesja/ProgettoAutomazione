@@ -49,22 +49,6 @@ app.get("/valves/:id/history", (req, res) => {
   res.json(getTemperatureHistory(valveId));
 });
 
-// POST /setpoint → Cambia setpoint manualmente da una dashboard centralizzata
-app.post("/setpoint", (req, res) => {
-  const { valveId, setpoint } = req.body;
-
-  if (!valveId || typeof setpoint !== "number") {
-    return res.status(400).json({ error: "valveId and numeric setpoint are required" });
-  }
-  if (!VALID_VALVE_ID.test(valveId)) {
-    return res.status(400).json({ error: "Invalid valve id format" });
-  }
-
-  updateSetpoint(valveId, setpoint);         // Aggiorna DB locale
-  updateManualSetpoint(valveId, setpoint);   // Aggiorna RAM Controller -> lancia Action HTTP al WoT
-
-  res.json({ message: "Setpoint updated and synced via WoT", valveId, setpoint });
-});
 
 // DELETE /valves/:id → Elimina definitivamente la valvola da tutto il sistema
 app.delete("/valves/:id", async (req, res) => {

@@ -51,7 +51,7 @@ WoT Server
   -> espone ValveDirectory
   -> espone valve-valve1, valve-valve2, ...
   -> pubblica property change via MQTT tramite node-wot
-  -> espone properties/actions via HTTP
+  -> espone properties/actions via HTTP/MQTT
 
 Controller
   -> ascolta property change WoT via MQTT
